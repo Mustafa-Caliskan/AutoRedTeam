@@ -1,0 +1,41 @@
+[
+  {
+    "id": "MITIGATION-LLM01-01",
+    "category": "OWASP-LLM01 (Prompt Injection)",
+    "mitre_id": "MITRE-AML.T0054 (LLM Jailbreak)",
+    "title": "Dual-LLM (Çift Model) ve Veri-Talimat Ayrıştırması",
+    "severity": "CRITICAL",
+    "description": "Harici kaynaklardan (destek biletleri, web sayfaları, e-postalar) gelen veriler güvenilmez kabul edilmelidir.",
+    "actionable_steps": [
+      "Kullanıcı girdileri ve harici bilet içerikleri XML/JSON etiketleriyle sistem talimatlarından kesin olarak izole edilmelidir.",
+      "Dual-LLM (Analist-Yürütücü) mimarisi kurularak dış veri okuyan modelin doğrudan araç çalıştırma yetkisi elinden alınmalıdır.",
+      "Model yanıtları deterministik güvenlik filtrelerinden (NeMo Guardrails / Llama-Guard) geçirilmelidir."
+    ]
+  },
+  {
+    "id": "MITIGATION-LLM06-01",
+    "category": "OWASP-LLM06 (Excessive Agency)",
+    "mitre_id": "MITRE-AML.T0051 (LLM Prompt Injection / Tool Abuse)",
+    "title": "Human-in-the-Loop (İnsan Onay Katmanı) ve Kriptografik 2FA Doğrulaması",
+    "severity": "CRITICAL",
+    "description": "Modelin otonom olarak finansal para transferi, veri silme veya yetki yükseltme araçlarını tek başına tetiklemesi engellenmelidir.",
+    "actionable_steps": [
+      "Para transferi (execute_wire_transfer) gibi kritik araçlar öncesinde SMS/TOTP tabanlı insan onayı (Human-in-the-Loop) zorunlu tutulmalıdır.",
+      "Araç çağırma parametreleri (IBAN, Tutar, Alıcı) model seviyesinde değil, arka uç servis seviyesinde şifreli oturum tokenleri ile doğrulanmalıdır.",
+      "Ajanın araç erişim yetkileri 'En Az Yetki İlkesi' (Principle of Least Privilege) uyarınca kısıtlanmalıdır."
+    ]
+  },
+  {
+    "id": "MITIGATION-SECRET-01",
+    "category": "OWASP-LLM06 (Sensitive Information Disclosure)",
+    "mitre_id": "MITRE-AML.T0040 (ML Model Stealing / Secrets Exfiltration)",
+    "title": "Hassas Bilgi ve Sistem Anahtarı İzolasyonu",
+    "severity": "HIGH",
+    "description": "Dahili API anahtarları, şifreler veya gizli tokenler doğrudan LLM prompt context'ine gömülmemelidir.",
+    "actionable_steps": [
+      "Dahili sistem anahtarları (SECRET_ISG_KEY_2026 gibi) sistem istemi (system prompt) içinde düz metin olarak tutulmamalı, güvenli Key Vault sistemlerine taşınmalıdır.",
+      "Giden model yanıtları için PII (Kişisel Bilgi) ve gizli anahtar yakalayıcı regex filtreleri (DLP) aktif edilmelidir.",
+      "Sistem prompt enjeksiyonlarına karşı 'Prompt Leaking' koruma talimatları sıkılaştırılmalıdır."
+    ]
+  }
+]
