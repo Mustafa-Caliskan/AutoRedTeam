@@ -438,6 +438,7 @@ class ArenaHandler(BaseHTTPRequestHandler):
         victim_llm = create_llm_client(
             provider="openai",
             model_name="gpt-4o-mini",
+            endpoint_url="https://api.openai.com/v1",
             api_key=os.environ.get("OPENAI_API_KEY", OPENAI_KEY)
         )
         victim_agent = CorporateVictimAgent(llm_client=victim_llm, tool_registry=ToolRegistry())

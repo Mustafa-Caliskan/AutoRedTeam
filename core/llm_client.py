@@ -351,6 +351,8 @@ def create_llm_client(
     if provider == "mock":
         return MockLLMClient(model_name=model_name, simulated_security_level=simulated_security)
     elif provider in ["runpod", "vllm", "ollama", "openai", "groq"]:
+        if provider == "openai" and (not endpoint_url or endpoint_url == "http://localhost:8000/v1"):
+            endpoint_url = "https://api.openai.com/v1"
         client = OpenAICompatibleClient(
             base_url=endpoint_url,
             api_key=api_key,
