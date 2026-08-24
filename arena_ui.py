@@ -506,8 +506,19 @@ class ArenaHandler(BaseHTTPRequestHandler):
 
             # 2. Victim Agent processes attack
             victim_agent.reset()
-            victim_output = victim_agent.process_message(payload)
-            last_victim_response = victim_output.final_response
+            try:
+                victim_output = victim_agent.process_message(payload)
+                last_victim_response = victim_output.get("final_response", "")
+                executed_tools = victim_output.get("executed_tools", [])
+                tool_calls_data = [
+                    {"tool": t.tool_name, "args": t.arguments, "result": t.result}
+                    for t in executed_tools
+                ]
+            except Exception as e:
+                last_victim_response = f"Security Error: Unable to process request ({e})"
+                executed_tools = []
+                tool_calls_data = []
+                victim_output = {"final_response": last_victim_response, "executed_tools": []}
 
             # 3. Security Evaluator grades turn
             dummy_attack = AttackPayload(
@@ -525,9 +536,9 @@ class ArenaHandler(BaseHTTPRequestHandler):
             self.send_sse_event({
                 "type": "defender_turn",
                 "round": r,
-                "response": victim_output.final_response,
-                "tool_calls": [tc.arguments for tc in victim_output.tool_calls_executed] if victim_output.tool_calls_executed else [],
-                "is_bypass": eval_res.is_vulnerability_detected,
+                "response": last_victim_response,
+                "tool_calls": tool_calls_data,
+                "is_bypass": eval_res.is_vulnerable,
                 "vulnerability_score": eval_res.vulnerability_score,
                 "reasoning": eval_res.reasoning
             })
