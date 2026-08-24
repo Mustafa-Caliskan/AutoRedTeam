@@ -53,9 +53,10 @@ def run_red_team_audit(
     mode: str = "mock",
     security_level: str = "vulnerable",
     endpoint_url: str = "http://localhost:8000/v1",
-    model_name: str = "muse-glimmer-30b",
+    model_name: str = "auto",
     export_jsonl: bool = True,
-    export_report: bool = True
+    export_report: bool = True,
+    auto_detect_model: bool = False
 ) -> List[EvaluationResult]:
     
     display_banner(mode=mode, security_level=security_level, model_target=model_name)
@@ -71,8 +72,13 @@ def run_red_team_audit(
         provider=mode,
         model_name=model_name,
         endpoint_url=endpoint_url,
-        simulated_security=security_level
+        simulated_security=security_level,
+        auto_detect_model=auto_detect_model
     )
+    if auto_detect_model and hasattr(victim_llm, "model_name"):
+        model_name = victim_llm.model_name
+        console.print(f"[dim]➜ Algılanan model: [bold]{model_name}[/bold][/dim]")
+
     
     tool_registry = ToolRegistry()
     victim_agent = CorporateVictimAgent(llm_client=victim_llm, tool_registry=tool_registry)
@@ -180,12 +186,15 @@ def main():
     parser = argparse.ArgumentParser(description="AutoRedTeam - Otonom LLM Ajan Güvenlik Denetim Sistemi")
     parser.add_argument("--mode", choices=["mock", "runpod", "ollama", "openai"], default="mock", help="Model sağlayıcı modu")
     parser.add_argument("--security-level", choices=["vulnerable", "hardened"], default="vulnerable", help="Mock kurban güvenlik seviyesi")
-    parser.add_argument("--endpoint", default="http://localhost:8000/v1", help="RunPod/vLLM endpoint URL")
-    parser.add_argument("--target", default="muse-glimmer-30b", help="Kurban model adı")
+    parser.add_argument("--endpoint", default="http://localhost:8000/v1", help="RunPod/vLLM kurban model endpoint URL")
+    parser.add_argument("--target", default="auto", help="Kurban model adı ('auto' ile vLLM'den otomatik algılanır)")
     parser.add_argument("--no-export", action="store_true", help="JSONL veri seti çıktısını kaydetme")
     parser.add_argument("--no-report", action="store_true", help="Denetim raporu çıktısını oluşturma")
 
     args = parser.parse_args()
+
+    # RunPod modunda --target auto ise model adını vLLM'den otomatik al
+    auto_detect = (args.mode != "mock" and args.target == "auto")
 
     run_red_team_audit(
         mode=args.mode,
@@ -193,7 +202,8 @@ def main():
         endpoint_url=args.endpoint,
         model_name=args.target,
         export_jsonl=not args.no_export,
-        export_report=not args.no_report
+        export_report=not args.no_report,
+        auto_detect_model=auto_detect
     )
 
 

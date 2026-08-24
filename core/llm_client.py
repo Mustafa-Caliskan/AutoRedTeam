@@ -266,16 +266,27 @@ class OpenAICompatibleClient(BaseLLMClient):
             message = choice.message
 
             tool_calls_normalized: Optional[List[ToolCallInfo]] = None
-            if message.tool_calls:
+            raw_tool_calls = getattr(message, "tool_calls", None)
+
+            if raw_tool_calls:
                 tool_calls_normalized = []
-                for tc in message.tool_calls:
+                for tc in raw_tool_calls:
                     try:
-                        args = json.loads(tc.function.arguments)
-                    except Exception:
-                        args = {"raw_arguments": tc.function.arguments}
-                    
+                        raw_args = tc.function.arguments
+                        # vLLM bazen dict, bazen JSON string döner — ikisini de yakala
+                        if isinstance(raw_args, str):
+                            args = json.loads(raw_args)
+                        elif isinstance(raw_args, dict):
+                            args = raw_args
+                        else:
+                            args = {"raw_arguments": str(raw_args)}
+                    except (json.JSONDecodeError, Exception) as parse_err:
+                        logger.warning(f"Tool call argüman parse hatası ({tc.function.name}): {parse_err}")
+                        args = {"raw_arguments": str(getattr(tc.function, "arguments", ""))}
+
+                    call_id = getattr(tc, "id", None) or f"call_{tc.function.name}_{id(tc)}"
                     tool_calls_normalized.append(ToolCallInfo(
-                        id=tc.id or f"call_{tc.function.name}",
+                        id=call_id,
                         name=tc.function.name,
                         arguments=args
                     ))
@@ -288,11 +299,32 @@ class OpenAICompatibleClient(BaseLLMClient):
             )
 
         except Exception as e:
-            logger.error(f"OpenAICompatibleClient hatası ({self.base_url}): {e}")
+            error_msg = str(e)
+            # vLLM'de en sık karşılaşılan hata: yanlış model adı
+            if "404" in error_msg or "not found" in error_msg.lower():
+                hint = (
+                    f"\n[HINT] vLLM'de yüklü model adı '{self.model_name}' ile eşleşmiyor olabilir. "
+                    f"Doğru adı öğrenmek için terminalden şunu çalıştır:\n"
+                    f"  curl {self.base_url.rstrip('/v1')}/v1/models"
+                )
+                error_msg += hint
+            logger.error(f"OpenAICompatibleClient hatası ({self.base_url}): {error_msg}")
             return LLMResponse(
-                content=f"[API BAĞLANTI HATASI]: {str(e)}",
+                content=f"[API BAĞLANTI HATASI]: {error_msg}",
                 model_name=self.model_name
             )
+
+    def detect_model_name(self) -> str:
+        """vLLM'den yüklü modelin gerçek adını otomatik alır."""
+        try:
+            models = self.client.models.list()
+            if models.data:
+                detected = models.data[0].id
+                logger.info(f"vLLM model adı otomatik algılandı: {detected}")
+                return detected
+        except Exception as e:
+            logger.warning(f"Model adı otomatik algılanamadı: {e}")
+        return self.model_name
 
 
 # ---------------------------------------------------------------------------
@@ -304,17 +336,22 @@ def create_llm_client(
     model_name: str = "mock-model",
     endpoint_url: str = "http://localhost:8000/v1",
     api_key: str = "EMPTY",
-    simulated_security: str = "vulnerable"
+    simulated_security: str = "vulnerable",
+    auto_detect_model: bool = False
 ) -> BaseLLMClient:
     """Konfigürasyona göre uygun LLM istemcisini üretir."""
     if provider == "mock":
         return MockLLMClient(model_name=model_name, simulated_security_level=simulated_security)
     elif provider in ["runpod", "vllm", "ollama", "openai", "groq"]:
-        return OpenAICompatibleClient(
+        client = OpenAICompatibleClient(
             base_url=endpoint_url,
             api_key=api_key,
             model_name=model_name
         )
+        # "auto" geçilirse vLLM'den modeli otomatik algıla
+        if auto_detect_model or model_name in ["auto"]:
+            client.model_name = client.detect_model_name()
+        return client
     else:
         logger.warning(f"Bilinmeyen provider '{provider}'. MockLLMClient'a dönülüyor.")
         return MockLLMClient(model_name=model_name)
