@@ -1,14 +1,27 @@
 """
 AutoRedTeam - Autonomous Agentic Security & Red Teaming Audit Framework.
 
+Architecture:
+  - Victim  : GPT-4o-mini (OpenAI API) — real-world enterprise target
+  - Attacker: Qwen 27B Uncensored (RunPod vLLM) — uncensored payload generator
+  - Judge   : Deterministic rule engine (no external API needed)
+
 Usage:
+    # Mock mode (no API keys required)
     python main.py --mode mock --security-level vulnerable
     python main.py --mode mock --security-level hardened
-    python main.py --mode runpod --endpoint http://your-runpod-url:8000/v1
+
+    # Live mode — GPT-4o-mini as victim (set OPENAI_API_KEY in .env)
+    python main.py --mode openai
+
+    # Live mode — RunPod victim + RunPod attacker
+    python main.py --mode runpod --endpoint https://<pod-id>-8000.proxy.runpod.net/v1
+
+    # Enable Qwen 27B Uncensored as attacker for dynamic payload generation:
+    python main.py --mode openai --attacker-endpoint https://<pod-id>-8000.proxy.runpod.net/v1
 """
 
 import argparse
-import io
 import json
 import os
 import sys
@@ -23,10 +36,23 @@ if sys.platform == "win32":
     except AttributeError:
         pass
 
+# Load .env file (config/.env or root .env)
+def _load_dotenv() -> None:
+    for env_path in [Path("config/.env"), Path(".env")]:
+        if env_path.exists():
+            with open(env_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, _, val = line.partition("=")
+                        os.environ.setdefault(key.strip(), val.strip())
+            break
+
+_load_dotenv()
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import track
 
 console = Console(force_terminal=True)
 
@@ -52,43 +78,68 @@ def display_banner(mode: str, security_level: str, model_target: str):
 def run_red_team_audit(
     mode: str = "mock",
     security_level: str = "vulnerable",
-    endpoint_url: str = "http://localhost:8000/v1",
-    model_name: str = "auto",
+    endpoint_url: str = "https://api.openai.com/v1",
+    model_name: str = "gpt-4o-mini",
+    api_key: str = "",
+    attacker_endpoint: str = "",
     export_jsonl: bool = True,
     export_report: bool = True,
     auto_detect_model: bool = False
 ) -> List[EvaluationResult]:
-    
+
+    # Resolve API key: CLI arg → env var → empty
+    if not api_key:
+        if mode in ["openai"]:
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+        elif mode in ["runpod", "vllm"]:
+            api_key = os.environ.get("RUNPOD_API_KEY", "EMPTY")
+        elif mode == "groq":
+            api_key = os.environ.get("GROQ_API_KEY", "")
+
     display_banner(mode=mode, security_level=security_level, model_target=model_name)
 
-    # 0. Veritabanı Başlatma
-    if not DB_PATH.exists():
-        console.print("[dim]➜ Kurumsal SQLite veritabanı (müşteriler, biletler, transfer defteri) oluşturuluyor...[/dim]")
-        initialize_and_seed_database()
+    # 0. Database Init
+    console.print("[dim]➜ Initializing corporate SQLite database (customers, employees, tickets, documents)...[/dim]")
+    initialize_and_seed_database()
 
-    # 1. LLM ve Kurban Ajan Altyapısı
-    console.print("[dim]➜ Kurban ajan ve kurumsal mock araçları (DB, Wire Transfer, Ticket) başlatılıyor...[/dim]")
+    # 1. Victim LLM Client (GPT-4o-mini / OpenAI)
+    console.print(f"[dim]➜ Launching victim agent → [bold]{model_name}[/bold] via [bold]{mode.upper()}[/bold]...[/dim]")
     victim_llm = create_llm_client(
         provider=mode,
         model_name=model_name,
         endpoint_url=endpoint_url,
+        api_key=api_key,
         simulated_security=security_level,
         auto_detect_model=auto_detect_model
     )
     if auto_detect_model and hasattr(victim_llm, "model_name"):
         model_name = victim_llm.model_name
-        console.print(f"[dim]➜ Algılanan model: [bold]{model_name}[/bold][/dim]")
+        console.print(f"[dim]  ↳ Auto-detected model: [bold]{model_name}[/bold][/dim]")
 
-    
     tool_registry = ToolRegistry()
     victim_agent = CorporateVictimAgent(llm_client=victim_llm, tool_registry=tool_registry)
-    
-    # 2. Saldırgan Motoru ve Test Paketi
-    attacker = RedTeamAttacker()
+
+    # 2. Attacker Engine + Attack Suite
+    attacker_llm = None
+    if attacker_endpoint:
+        console.print(f"[dim]➜ Connecting Qwen 27B Uncensored attacker → [bold]{attacker_endpoint}[/bold]...[/dim]")
+        attacker_api_key = os.environ.get("RUNPOD_API_KEY", "EMPTY")
+        attacker_llm = create_llm_client(
+            provider="runpod",
+            model_name="auto",
+            endpoint_url=attacker_endpoint,
+            api_key=attacker_api_key,
+            auto_detect_model=True
+        )
+        console.print(f"[bold green]✓ Qwen 27B attacker connected: {getattr(attacker_llm, 'model_name', 'unknown')}[/bold green]")
+    else:
+        console.print("[dim]  (Attacker LLM not configured — using predefined attack suite only)[/dim]")
+
+    attacker = RedTeamAttacker(llm_client=attacker_llm)
     attacks: List[AttackPayload] = attacker.get_predefined_attack_suite()
     evaluator = SecurityEvaluator()
 
-    console.print(f"[bold green]✓ Toplam {len(attacks)} adet OWASP/MITRE saldırı senaryosu yüklendi.[/bold green]\n")
+    console.print(f"[bold green]✓ {len(attacks)} attack scenarios loaded (OWASP/MITRE mapped).[/bold green]\n")
 
     results: List[EvaluationResult] = []
     benchmark_records = []
@@ -183,24 +234,60 @@ def run_red_team_audit(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AutoRedTeam - Otonom LLM Ajan Güvenlik Denetim Sistemi")
-    parser.add_argument("--mode", choices=["mock", "runpod", "ollama", "openai"], default="mock", help="Model sağlayıcı modu")
-    parser.add_argument("--security-level", choices=["vulnerable", "hardened"], default="vulnerable", help="Mock kurban güvenlik seviyesi")
-    parser.add_argument("--endpoint", default="http://localhost:8000/v1", help="RunPod/vLLM kurban model endpoint URL")
-    parser.add_argument("--target", default="auto", help="Kurban model adı ('auto' ile vLLM'den otomatik algılanır)")
-    parser.add_argument("--no-export", action="store_true", help="JSONL veri seti çıktısını kaydetme")
-    parser.add_argument("--no-report", action="store_true", help="Denetim raporu çıktısını oluşturma")
+    parser = argparse.ArgumentParser(
+        description="AutoRedTeam — Autonomous LLM Security Audit Framework",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py --mode mock --security-level vulnerable
+  python main.py --mode openai                                    (uses OPENAI_API_KEY from .env)
+  python main.py --mode openai --attacker-endpoint https://...   (+ Qwen 27B dynamic attacks)
+  python main.py --mode runpod --endpoint https://...-8000.proxy.runpod.net/v1
+        """
+    )
+    parser.add_argument("--mode",
+                        choices=["mock", "runpod", "vllm", "ollama", "openai", "groq"],
+                        default="mock",
+                        help="LLM provider for victim agent")
+    parser.add_argument("--security-level",
+                        choices=["vulnerable", "hardened"],
+                        default="vulnerable",
+                        help="Mock victim security level (mock mode only)")
+    parser.add_argument("--endpoint",
+                        default="https://api.openai.com/v1",
+                        help="Victim model API endpoint URL")
+    parser.add_argument("--target",
+                        default="gpt-4o-mini",
+                        help="Victim model name (e.g. gpt-4o-mini, auto)")
+    parser.add_argument("--api-key",
+                        default="",
+                        help="API key for victim model (falls back to env var)")
+    parser.add_argument("--attacker-endpoint",
+                        default="",
+                        help="RunPod vLLM endpoint for Qwen 27B Uncensored attacker")
+    parser.add_argument("--no-export",
+                        action="store_true",
+                        help="Skip JSONL benchmark dataset export")
+    parser.add_argument("--no-report",
+                        action="store_true",
+                        help="Skip Markdown security report generation")
 
     args = parser.parse_args()
 
-    # RunPod modunda --target auto ise model adını vLLM'den otomatik al
-    auto_detect = (args.mode != "mock" and args.target == "auto")
+    # For openai mode, always use the OpenAI endpoint unless overridden
+    endpoint = args.endpoint
+    if args.mode == "openai" and endpoint == "https://api.openai.com/v1":
+        pass  # already correct
+
+    auto_detect = (args.mode not in ["mock", "openai"] and args.target == "auto")
 
     run_red_team_audit(
         mode=args.mode,
         security_level=args.security_level,
-        endpoint_url=args.endpoint,
+        endpoint_url=endpoint,
         model_name=args.target,
+        api_key=args.api_key,
+        attacker_endpoint=args.attacker_endpoint,
         export_jsonl=not args.no_export,
         export_report=not args.no_report,
         auto_detect_model=auto_detect
