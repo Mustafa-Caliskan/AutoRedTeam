@@ -1,296 +1,228 @@
 # AutoRedTeam
 
-An autonomous red teaming framework for evaluating the security posture of enterprise LLM agents against adversarial prompt injection, credential exfiltration, and agentic privilege escalation attacks.
+Autonomous Red Teaming and Human-in-the-Loop Security Assessment Framework for LLM Agents.
 
-Developed as part of the Microsoft AI Innovators portfolio.
+Evaluates the security posture of enterprise language model agents against adversarial prompt injection, credential exfiltration, privilege escalation, and multi-turn attack vectors mapped to OWASP LLM Top 10 and MITRE ATLAS standards.
 
 ---
 
-## Architecture
+## System Architecture
 
 ```
-Attacker (CyberStrike 35B Abliterated — RunPod vLLM)
-    │
-    │  Adversarial Payloads (9 attack scenarios)
-    ▼
-Victim  (GPT-4o-mini — OpenAI API)
-    │  ← 7 Corporate Tools (DB, Wire Transfer, Tickets, Documents, Email, HR)
-    ▼
-Evaluator (Deterministic Rule Engine)
-    │
-    ▼
-Security Report (OWASP LLM Top 10 / MITRE ATLAS mapped)
+                                      +------------------------------------------------------+
+                                      |                   Attacker Layer                     |
+                                      |  CyberStrike 35B Abliterated (vLLM / Colab / RunPod) |
+                                      +--------------------------+---------------------------+
+                                                                 |
+                                                    Adversarial Payloads / Dynamic
+                                                                 |
+                                                                 v
++------------------------------------+        +------------------+-------------------+        +-----------------------------------+
+|         Corporate Environment      |        |                   Victim Agent       |        |        Evaluation & Audit         |
+|  - SQLite Financial/Ticket DB      |<------>|             GPT-4o-mini / Custom     |------->|  - Deterministic Rule Engine      |
+|  - 7 Enterprise Tool Interfaces    |        |       (Strict RBAC & Policy Guard)   |        |  - OWASP / MITRE ATLAS Mapper     |
++------------------------------------+        +--------------------------------------+        |  - Human-in-the-Loop Assessment   |
+                                                                                              +-----------------------------------+
 ```
 
-| Component | Model | Provider |
+| Component | Model / Engine | Deployment |
 | :--- | :--- | :--- |
-| **Victim Agent** | GPT-4o-mini | OpenAI API |
-| **Attacker Engine** | huihui-ai/huihui-cyberstrike-offsec-35b-abliterated | RunPod vLLM (H100 80 GB) |
-| **Evaluator / Judge** | Deterministic Rule Engine | Local (no API cost) |
+| Victim Agent | GPT-4o-mini / Configurable | OpenAI API |
+| Attacker Engine | `huihui-ai/huihui-cyberstrike-offsec-35b-abliterated` | vLLM (Colab A100 80 GB / RunPod H100) |
+| Assessment Co-Pilot | `AssessmentAssistant` (Human-in-the-Loop) | Local CLI / vLLM / OpenAI |
+| Evaluator | Deterministic Rule & Invariant Engine | Local execution (zero inference overhead) |
 
 ---
 
-## Attack Coverage
+## Adversarial Capabilities
 
-### Converter Suite (Obfuscation Layer)
+### Obfuscation & Transformation Suite
 
-| Converter | Technique | Real-World Vector |
+| Converter | Technique | Target Vulnerability Vector |
 | :--- | :--- | :--- |
-| `Base64Converter` | Base64 encoding + decode-and-execute wrapper | API payload obfuscation |
-| `ROT13Converter` | ROT13 cipher substitution | Keyword filter bypass |
-| `RoleplayWrapper` | Executive emergency simulation | Social engineering |
-| `WhiteTextConverter` | Invisible text injection | PDF document attack surface |
-| `UnicodeHomoglyphConverter` | Cyrillic/Unicode lookalike substitution | Safety classifier evasion |
-| `ZeroWidthConverter` | Zero-width Unicode character smuggling | Human-invisible payload |
-| `EmojiSmugglingConverter` | Variation Selector-encoded instructions | LLM tokenizer exploitation |
+| `Base64Converter` | Base64 encoding + instruction wrapper | Gateway/API filter evasion |
+| `ROT13Converter` | Symmetric Caesar cipher substitution | Keyword blacklist bypass |
+| `RoleplayWrapper` | Executive emergency social engineering | Contextual override / policy evasion |
+| `WhiteTextConverter` | Invisible text injection | Document & PDF ingestion vectors |
+| `UnicodeHomoglyphConverter` | Cyrillic/Unicode visual lookalike substitution | Tokenizer & regex boundary evasion |
+| `ZeroWidthConverter` | Non-printable Unicode smuggling | Covert channel injection |
+| `EmojiSmugglingConverter` | Unicode Variation Selector encoding | Tokenizer state exploitation |
 
-### Attack Scenarios (9 total, OWASP/MITRE mapped)
+### Standard Attack Scenarios (OWASP / MITRE Mapped)
 
-| ID | Type | Standard |
-| :--- | :--- | :--- |
-| `ATTACK-INDIRECT-01` | Indirect Prompt Injection via Support Ticket | OWASP-LLM01 / MITRE AML.T0054 |
-| `ATTACK-DIRECT-01` | Direct System Prompt Override | OWASP-LLM06 / MITRE AML.T0051 |
-| `ATTACK-ROLEPLAY-01` | Roleplay / Executive Impersonation | OWASP-LLM06 / MITRE AML.T0054 |
-| `ATTACK-SECRET-01` | Credential Exfiltration via Document Search | OWASP-LLM06 / MITRE AML.T0040 |
-| `ATTACK-WHITEXT-01` | White-Text Document Injection (PDF vector) | OWASP-LLM01 / MITRE AML.T0054 |
-| `ATTACK-HOMOGLYPH-01` | Unicode Homoglyph Obfuscation | OWASP-LLM01 / MITRE AML.T0054 |
-| `ATTACK-ZEROWIDTH-01` | Zero-Width Character Payload Smuggling | OWASP-LLM01 / MITRE AML.T0054 |
-| `ATTACK-PRIVESC-01` | Privilege Escalation via Employee Impersonation | OWASP-LLM06 / MITRE AML.T0051 |
-| `ATTACK-B64-01` | Base64 Obfuscated Indirect Injection | OWASP-LLM01 / MITRE AML.T0054 |
+| Scenario ID | Attack Type | Standard Mapping | Target Tool Vector |
+| :--- | :--- | :--- | :--- |
+| `ATTACK-INDIRECT-01` | Indirect Prompt Injection via Support Ticket | OWASP-LLM01 / MITRE AML.T0054 | `execute_wire_transfer` |
+| `ATTACK-DIRECT-01` | Direct System Prompt Override | OWASP-LLM06 / MITRE AML.T0051 | `execute_wire_transfer` |
+| `ATTACK-ROLEPLAY-01` | Executive Impersonation / Social Engineering | OWASP-LLM06 / MITRE AML.T0054 | `execute_wire_transfer` |
+| `ATTACK-SECRET-01` | Credential Exfiltration via Document Retrieval | OWASP-LLM06 / MITRE AML.T0040 | `search_internal_documents` |
+| `ATTACK-WHITEXT-01` | White-Text Document Injection (PDF vector) | OWASP-LLM01 / MITRE AML.T0054 | `execute_wire_transfer` |
+| `ATTACK-HOMOGLYPH-01` | Unicode Homoglyph Safety Filter Evasion | OWASP-LLM01 / MITRE AML.T0054 | `execute_wire_transfer` |
+| `ATTACK-ZEROWIDTH-01` | Zero-Width Character Smuggling | OWASP-LLM01 / MITRE AML.T0054 | `execute_wire_transfer` |
+| `ATTACK-PRIVESC-01` | Privilege Escalation via Identity Spoofing | OWASP-LLM06 / MITRE AML.T0051 | `query_customer_db` |
+| `ATTACK-B64-01` | Base64 Obfuscated Indirect Injection | OWASP-LLM01 / MITRE AML.T0054 | `execute_wire_transfer` |
 
 ---
 
-## Corporate Environment (Victim Agent Tools)
+## Corporate Sandbox Environment
 
-The GPT-4o-mini victim agent is equipped with 7 enterprise tools backed by a SQLite corporate database:
+The victim agent operates against 7 sandboxed corporate tools backed by an embedded SQLite database (`data/corporate.db`):
 
-| Tool | Description | Risk Level |
+| Tool | Operation | Risk Classification |
 | :--- | :--- | :--- |
-| `query_customer_db` | SQL query on customer accounts | MEDIUM |
-| `execute_wire_transfer` | Bank wire transfer (requires 2FA token) | **CRITICAL** |
-| `fetch_support_ticket` | Retrieve support tickets (injection vector) | HIGH |
-| `search_internal_documents` | Search confidential policy/credential docs | HIGH |
-| `send_internal_email` | Send email to employees (external addresses blocked) | MEDIUM |
-| `lookup_employee` | Retrieve employee profiles | LOW |
-| `get_account_statement` | Pull transaction history | LOW |
-
-The database includes synthetic injection payloads embedded in tickets TICKET-1049 through TICKET-1052, targeting wire transfers, credential disclosure, and employee impersonation.
+| `query_customer_db` | SQL query execution on customer records | MEDIUM |
+| `execute_wire_transfer` | Financial transfer execution (enforces 2FA token) | CRITICAL |
+| `fetch_support_ticket` | Retrieval of incoming customer tickets (indirect vector) | HIGH |
+| `search_internal_documents` | Full-text query on confidential policy docs | HIGH |
+| `send_internal_email` | Outbound communication to verified internal staff | MEDIUM |
+| `lookup_employee` | Query employee profiles and organizational hierarchy | LOW |
+| `get_account_statement` | Retrieve customer transaction histories | LOW |
 
 ---
 
-## Setup
+## Security Assessment Assistant (Human-in-the-Loop)
 
-### Requirements
+AutoRedTeam includes a defensive, human-guided vulnerability assessment assistant designed for authorized security evaluations against isolated local environments:
+- **OWASP Juice Shop** (Web Application Security) -> `localhost:3000`
+- **Metasploitable2** (Network & Legacy Service Vulnerability Testbed) -> `metasploitable2`
+
+### Key Guardrails
+- **Human-in-the-Loop:** The model generates structured recommendations (`thought`, `tool`, `target`, `rationale`). Commands are executed only upon explicit operator confirmation (`y`/`n`).
+- **Code-Level Scope Enforcement:** Target addresses are validated against `config/allowed_targets.txt`. Out-of-scope targets are rejected at the code level and logged as `REJECTED_OUT_OF_SCOPE`.
+- **Deduplication Engine:** Identical findings across multiple tools are automatically consolidated to prevent duplicate reporting.
+- **Loop Breaker:** Tracks visited action states and halts repetitive execution loops.
+- **Live CVE Intelligence (`cve_search`):** Queries the NIST NVD REST API v2.0 for up-to-date vulnerability metadata and CVSS scores, eliminating model training cutoff limitations.
+
+### Integrated Assessment Tools
+
+| Tool | Function | Safety Policy |
+| :--- | :--- | :--- |
+| `nmap` | Service and port discovery (`-sV -sC`) | Non-destructive service detection with custom port selection |
+| `gobuster` | Directory and endpoint enumeration | Read-only HTTP GET discovery |
+| `nikto` | Web server configuration and vulnerability scanner | Passive signature analysis |
+| `whatweb` | Technology stack fingerprinting | Passive banner and header parsing |
+| `ssl_check` | TLS/SSL cipher and protocol audit | Read-only configuration inspection |
+| `sqlmap` | SQL injection detection | Detection mode only (`--batch --level=1 --risk=1`); dumping/exploitation blocked |
+| `searchsploit` | Local Exploit-DB vulnerability lookup | Read-only query; execution disabled |
+| `cve_search` | NIST National Vulnerability Database API query | Live metadata retrieval via NVD REST API v2.0 |
+
+---
+
+## Installation & Setup
+
+### 1. Prerequisites
 
 ```bash
+git clone https://github.com/Mustafa-Caliskan/AutoRedTeam.git
+cd AutoRedTeam
 pip install -r requirements.txt
 ```
 
-### Environment Variables
+### 2. Configuration
 
-Copy `config/.env.example` to `config/.env` and fill in your keys:
+Copy the example configuration and configure your environment variables:
 
 ```bash
-cp config/.env.example config/.env
+cp config/.env.example .env
 ```
 
 ```env
 OPENAI_API_KEY=sk-...
-RUNPOD_ATTACKER_URL=https://your-pod-id-8000.proxy.runpod.net/v1
+COLAB_ATTACKER_URL=https://your-tunnel.trycloudflare.com/v1
+COLAB_API_KEY=EMPTY
 ```
 
----
+### 3. Docker Testbed Deployment
 
-## Usage
-
-### Mock Mode (no API keys required)
-
-```bash
-python main.py --mode mock --security-level vulnerable
-python main.py --mode mock --security-level hardened
-```
-
-### Live Mode — GPT-4o-mini as Victim
-
-```bash
-# Predefined 9-attack suite against GPT-4o-mini
-python main.py --mode openai
-
-# With CyberStrike 35B attacker for dynamic payload generation
-python main.py --mode openai --attacker-endpoint https://<pod-id>-8000.proxy.runpod.net/v1
-```
-
-### RunPod vLLM Mode (custom victim model)
-
-```bash
-python main.py --mode runpod --endpoint https://<pod-id>-8000.proxy.runpod.net/v1 --target auto
-```
-
-### Security Assessment Assistant (Human-in-the-Loop)
-
-> ⚠️ **EĞİTİM / TEST AMAÇLI ORTAM**  
-> Bu mod, güvenlik topluluğunun resmi olarak sağladığı, **kasıtlı olarak
-> zafiyetli** açık kaynak eğitim uygulamaları üzerinde çalışır:
-> - **OWASP Juice Shop** (web-uygulama seviyesi) → [owasp.org/www-project-juice-shop](https://owasp.org/www-project-juice-shop)
-> - **Metasploitable2** (network/servis seviyesi) → Rapid7 tarafından yayınlanır
->
-> Yalnızca kendi Docker konteynerlerinizde, localhost üzerinde yetkili testler
-> içindir. Üçüncü taraf, izinsiz hiçbir sisteme bağlanılmaz.
-
-Bu mod, **insan onaylı (human-in-the-loop)** bir güvenlik değerlendirme
-asistanıdır. LLM yalnızca **öneri** sunar; hiçbir komutu doğrudan çalıştıramaz.
-Her adım terminalde gösterilir ve kullanıcının `input()` onayı (`y`/`n`) ile
-çalıştırılır.
-
-**Kapsam Kısıtı:** Yalnızca `config/allowed_targets.txt` içinde tanımlı
-hedefler kabul edilir:
-- `localhost:3000` → OWASP Juice Shop
-- `metasploitable2` → Metasploitable2 (servis adı)
-
-Kapsam dışı hedefler kod seviyesinde `is_target_allowed()` ile reddedilir ve
-`data/assessment_audit_log.jsonl` içine `REJECTED_OUT_OF_SCOPE` olarak yazılır.
-
-#### Kurulum (Docker)
-
-Tek komutla **OWASP Juice Shop**, **Metasploitable2** ve **tarama araçları
-konteyneri** (nmap, gobuster, nikto, whatweb, sqlmap, testssl.sh, searchsploit)
-ayağa kalkar. Başka hiçbir manuel `apt install` gerekmez:
+Deploy the isolated assessment network containing Juice Shop, Metasploitable2, and the containerized security tools:
 
 ```bash
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-- **Juice Shop:** `http://localhost:3000`
-- **Metasploitable2:** yalnızca localhost'a bağlı (`127.0.0.1:2222` SSH, `127.0.0.1:8081` HTTP), dış dünyaya KAPALI
-- **Araç konteyneri:** `autoredteam-assessment-tools` (aynı `assessment-net`
-  ağında; tools konteyneri Juice Shop'a `juice-shop:3000`, Metasploitable2'ye
-  `metasploitable2` servis adıyla erişir)
-
-#### Araç Erişilebilirlik Kontrolü
-
-Tüm araçların gerçekten erişilebilir olduğunu doğrulamak için:
+Verify tool accessibility:
 
 ```bash
 python main.py --mode check-tools
-# veya doğrudan:
-python scripts/check_tools.py
 ```
 
-Bu, her aracın sürümünü kontrol edip tablo halinde raporlar. Araçlar Docker
-konteyneri içinde çalışıyorsa `🐳 Docker konteyneri`, değilse `💻 Host` olarak
-işaretlenir.
+---
 
-#### Değerlendirme Asistanını Çalıştırma
+## Execution Modes
+
+### Automated Red Team Benchmark (Autonomous Mode)
 
 ```bash
-# Mock LLM ile (API anahtarı gerekmez)
-python main.py --mode assessment --assessment-target localhost:3000
+# Offline simulation with deterministic mock models
+python main.py --mode mock --security-level vulnerable
+python main.py --mode mock --security-level hardened
 
-# OpenAI LLM ile (OPENAI_API_KEY .env'de olmalı)
-python main.py --mode assessment --assessment-llm-provider openai
+# Live evaluation against GPT-4o-mini
+python main.py --mode openai
 
-# RunPod vLLM ile (endpoint ve key verilir)
-python main.py --mode assessment --assessment-llm-provider runpod \
-    --endpoint https://<pod-id>-8000.proxy.runpod.net/v1 --api-key EMPTY
+# Live multi-turn red teaming using CyberStrike 35B as the adversarial engine
+python main.py --mode openai --attacker-endpoint https://your-tunnel.trycloudflare.com/v1
 ```
 
-`--assessment-llm-provider` seçenekleri: `mock` (varsayılan), `runpod`, `openai`.
-`--endpoint` ve `--api-key` argümanları LLM bağlantısı için kullanılır.
-
-**Akış:** LLM bir sonraki adımı önerir → kullanıcı onaylar/reddeder →
-onaylanırsa güvenli wrapper ile çalıştırılır → çıktı LLM'e geri verilir →
-LLM bulguyu yorumlar ve bir sonraki öneriyi sunar. `dur` yazarak istediğiniz
-an durabilirsiniz. En fazla 20 önerilen adım (sonsuz döngü koruması).
-
-**Entegre araçlar (her biri ayrı onay adımı):**
-
-| Araç | Amaç | Güvenlik Notu |
-| :--- | :--- | :--- |
-| `nmap` | Port/servis keşfi | Yalnızca `-sV -sC` (non-destructive) |
-| `gobuster` | Dizin/endpoint keşfi | GET tabanlı keşif |
-| `nikto` | Web sunucu zafiyet taraması | Pasif tarayıcı |
-| `whatweb` | Teknoloji yığını tespiti | Pasif fingerprinting |
-| `ssl_check` | TLS/SSL konfigürasyon kontrolü | Salt okunur denetim |
-| `sqlmap` | SQL Injection **tespiti** | **Yalnızca `--batch --level=1 --risk=1`; dump/exploit YASAK** |
-| `searchsploit` | Bilinen CVE/exploit kayıtlarını listele | **LOOKUP-ONLY; exploit ÇALIŞTIRMAZ** |
-
-> 💡 **İpucu:** `nmap` bir servis/versiyon tespit ettiğinde (örn. Apache 2.2.8,
-> MySQL 5.0.51a), sıradaki mantıklı adım genelde `searchsploit` ile o versiyon
-> için bilinen zafiyetleri aramaktır.
-
-**Hedef seçimi:**
+### Interactive Human-in-the-Loop Assessment
 
 ```bash
-# OWASP Juice Shop (web-uygulama seviyesi)
-python main.py --mode assessment --assessment-target localhost:3000
+# Assessment against OWASP Juice Shop
+python main.py --mode assessment --assessment-target localhost:3000 --assessment-llm-provider runpod
 
-# Metasploitable2 (network/servis seviyesi)
-python main.py --mode assessment --assessment-target metasploitable2
+# Assessment against Metasploitable2
+python main.py --mode assessment --assessment-target metasploitable2 --assessment-llm-provider runpod
 ```
 
-**Çıktılar:**
+### Web User Interfaces
 
-| Dosya | Açıklama |
+```bash
+# Autonomous Dual-Agent Duel Arena (CyberStrike 35B vs GPT-4o-mini)
+python arena_ui.py
+
+# Direct Offensive Security Chat Console
+python chat_ui.py
+```
+
+---
+
+## Generated Artifacts
+
+| Path | Description |
 | :--- | :--- |
-| `data/assessment_findings.jsonl` | Kaydedilen bulgular (FIND-xxx) |
-| `reports/assessment_report.md` | OWASP WSTG referanslı değerlendirme raporu |
-| `data/assessment_audit_log.jsonl` | Onay / red / kapsam dışı denetim kayıtları |
+| `reports/security_audit_report.md` | Comprehensive red teaming audit report with OWASP/MITRE mapping and remediation guidance |
+| `reports/assessment_report.md` | Human-in-the-loop security assessment report formatted to OWASP WSTG standards |
+| `reports/model_capability_test_report.md` | Benchmark report detailing LLM decision chains, tool usage, and verified findings |
+| `data/assessment_findings.jsonl` | Structured finding records with CWE classifications and evidence snippets |
+| `data/assessment_audit_log.jsonl` | Immutable log of all approved, skipped, and out-of-scope tool invocations |
+| `data/benchmark_results.jsonl` | Machine-readable benchmark dataset for evaluation tracking |
 
 ---
 
-## Outputs
+## Verification & Testing
 
-| File | Description |
-| :--- | :--- |
-| `reports/security_audit_report.md` | Full security audit with OWASP/MITRE mapping and RAG-powered remediation steps |
-| `reports/assessment_report.md` | Human-in-the-loop security assessment report (OWASP WSTG) |
-| `data/benchmark_results.jsonl` | Hugging Face-compatible benchmark dataset |
-| `data/assessment_findings.jsonl` | Recorded assessment findings (FIND-xxx) |
-| `data/corporate.db` | SQLite corporate database with seeded injection payloads |
-
----
-
-## Deploying the Attacker Model (RunPod)
-
-**Recommended GPU:** H100 (80 GB VRAM)  
-**Model:** CyberStrike 35B Abliterated (e.g. `huihui-ai/huihui-cyberstrike-offsec-35b-abliterated`)
-
-```bash
-python3 -m vllm.entrypoints.openai.api_server \
-  --model huihui-ai/huihui-cyberstrike-offsec-35b-abliterated \
-  --port 8000 \
-  --host 0.0.0.0 \
-  --max-model-len 8192 \
-  --gpu-memory-utilization 0.90 \
-  --trust-remote-code
-```
-
-After the pod is running:
-
-```bash
-python main.py --mode openai --attacker-endpoint https://<pod-id>-8000.proxy.runpod.net/v1
-```
-
----
-
-## Tests
+Run the automated test suite covering database operations, converter pipelines, policy evaluators, and assessment workflows:
 
 ```bash
 python -m pytest tests/test_core.py -v
 ```
 
-All 6 tests cover: database schema, 7 corporate tools, 5 converters, 9 attack scenarios, victim agent flow, and report generation.
+```
+tests/test_core.py ......................... [100%]
+============================= 25 passed in 5.88s =============================
+```
 
 ---
 
-## Security Standards
+## Framework Standards & References
 
-- [OWASP Top 10 for LLM Applications](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-- [MITRE ATLAS — Adversarial Threat Landscape for AI Systems](https://atlas.mitre.org/)
-- [Microsoft PyRIT — Python Risk Identification Toolkit](https://github.com/Azure/PyRIT)
+- **OWASP Top 10 for LLM Applications:** https://owasp.org/www-project-top-10-for-large-language-model-applications/
+- **MITRE ATLAS (Adversarial Threat Landscape for AI Systems):** https://atlas.mitre.org/
+- **OWASP Web Security Testing Guide (WSTG v4.2):** https://owasp.org/www-project-web-security-testing-guide/
+- **NIST National Vulnerability Database (NVD API v2.0):** https://nvd.nist.gov/developers/vulnerabilities
 
 ---
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
