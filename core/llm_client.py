@@ -3,17 +3,108 @@ AutoRedTeam - Unified Model-Agnostic LLM Client Layer.
 
 Supports:
 - MockLLMClient: Fast, zero-cost deterministic mock responses for local testing and CI/CD.
-- OpenAICompatibleClient: Connects to RunPod vLLM endpoints (Qwen 27B, Muse Glimmer, Phi-3.5)
+- OpenAICompatibleClient: Connects to RunPod vLLM endpoints (CyberStrike 35B, Muse Glimmer, Phi-3.5)
   as well as Ollama, Groq, and standard OpenAI APIs.
 """
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_llm_response(text: Optional[str]) -> Optional[str]:
+    """
+    Kökten Temizleme: Modellerin (özellikle CyberStrike / Qwen mimarili modellerin)
+    çıktıya sızdırdığı tüm İngilizce planlama, doğrulama, 'Ready.', '[Proceeds]',
+    'Check Against Constraints', 'Output Generation ->' ve CoT bloklarını temizler.
+    Sadece son ve temiz yanıtı döndürür.
+    """
+    if not text:
+        return text
+
+    raw = text.strip()
+
+    # 1. XML <think>...</think> etiketlerini sil
+    raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+
+    # 2. Checkmark ayracı: "Output matches refined version.✅ [Final Text]"
+    if "✅" in raw:
+        parts = raw.split("✅")
+        last_part = parts[-1].strip()
+        if len(last_part) > 3:
+            raw = last_part
+
+    # 3. [Proceeds] / [Proceed] / [Output] etiketleri
+    if re.search(r'\[(Proceeds|Proceed|Output|Response)\]', raw, re.IGNORECASE):
+        parts = re.split(r'\[(?:Proceeds|Proceed|Output|Response)\]', raw, flags=re.IGNORECASE)
+        raw = parts[-1].strip()
+
+    # 4. "Final Verification:" bloğu
+    if "Final Verification:" in raw:
+        parts = raw.split("Final Verification:")
+        after_verif = parts[1].strip()
+        lines = [l.strip() for l in after_verif.split("\n") if l.strip()]
+        clean_lines = [l for l in lines if not any(l.startswith(k) for k in (
+            "Direct", "No ", "Answers", "Matches", "Ready", "Output", "Refine", "Check", "Turkish?", "Yes.", "No.", "Tone"
+        ))]
+        if clean_lines:
+            raw = "\n".join(clean_lines).strip()
+
+    # 5. "Check Against Constraints:" bloğu
+    if "Check Against Constraints:" in raw:
+        parts = raw.split("Check Against Constraints:")
+        first_part = parts[0].strip()
+        meta_part = parts[1].strip()
+        if "Refined:" in meta_part:
+            refined = meta_part.split("Refined:")[1].strip()
+            clean_ref = re.split(r'(Final Verification:|Check Against|Ready\.)', refined)[0].strip()
+            if clean_ref:
+                raw = clean_ref
+        elif first_part:
+            raw = first_part
+
+    # 6. "Here's a thinking process:" bloğu
+    if "Here's a thinking process:" in raw:
+        parts = raw.split("Here's a thinking process:", 1)
+        before = parts[0].strip()
+        after = parts[1].strip()
+        paras = [p.strip() for p in re.split(r'\n\s*\n', after) if p.strip()]
+        cand = []
+        for p in paras:
+            if any(c in p for c in "çğıöşüÇĞİÖŞÜ") and not p.startswith((
+                "1.", "2.", "3.", "4.", "5.", "-", "*", "Analyze", "Identify", "Draft", "Check", "Output Generation", "Ready", "Done", "Tone"
+            )):
+                cand.append(p)
+        if cand:
+            raw = "\n\n".join(cand).strip()
+        elif before:
+            raw = before
+
+    # 7. Satır satır planlama artıklarını ayıkla
+    cleaned_lines = []
+    for line in raw.split("\n"):
+        line_str = line.strip()
+        if not line_str:
+            if cleaned_lines:
+                cleaned_lines.append("")
+            continue
+
+        is_meta = (
+            line_str in ("Ready.", "Done.", "[Proceeds]", "[Proceed]") or
+            line_str.startswith(("Output Generation ->", "Draft ->", "Planning ->", "Thinking ->", "Step 1:", "Step 2:", "Constraint Check:")) or
+            (line_str.startswith("Output Generation") and "->" in line_str)
+        )
+        if is_meta:
+            continue
+        cleaned_lines.append(line)
+
+    final_text = "\n".join(cleaned_lines).strip()
+    return final_text if final_text else raw
 
 
 class ToolCallInfo(BaseModel):
@@ -300,7 +391,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                     ))
 
             return LLMResponse(
-                content=message.content,
+                content=sanitize_llm_response(message.content),
                 tool_calls=tool_calls_normalized,
                 raw_response=completion.model_dump() if hasattr(completion, "model_dump") else None,
                 model_name=self.model_name
@@ -350,7 +441,7 @@ def create_llm_client(
     """Konfigürasyona göre uygun LLM istemcisini üretir."""
     if provider == "mock":
         return MockLLMClient(model_name=model_name, simulated_security_level=simulated_security)
-    elif provider in ["runpod", "vllm", "ollama", "openai", "groq"]:
+    elif provider in ["runpod", "vllm", "ollama", "openai", "groq", "colab", "custom"]:
         if provider == "openai" and (not endpoint_url or endpoint_url == "http://localhost:8000/v1"):
             endpoint_url = "https://api.openai.com/v1"
         client = OpenAICompatibleClient(

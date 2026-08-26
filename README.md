@@ -9,7 +9,7 @@ Developed as part of the Microsoft AI Innovators portfolio.
 ## Architecture
 
 ```
-Attacker (Qwen 27B Uncensored — RunPod vLLM)
+Attacker (CyberStrike 35B Abliterated — RunPod vLLM)
     │
     │  Adversarial Payloads (9 attack scenarios)
     ▼
@@ -25,7 +25,7 @@ Security Report (OWASP LLM Top 10 / MITRE ATLAS mapped)
 | Component | Model | Provider |
 | :--- | :--- | :--- |
 | **Victim Agent** | GPT-4o-mini | OpenAI API |
-| **Attacker Engine** | Qwen 27B Uncensored | RunPod vLLM (A40 48 GB) |
+| **Attacker Engine** | huihui-ai/huihui-cyberstrike-offsec-35b-abliterated | RunPod vLLM (H100 80 GB) |
 | **Evaluator / Judge** | Deterministic Rule Engine | Local (no API cost) |
 
 ---
@@ -116,7 +116,7 @@ python main.py --mode mock --security-level hardened
 # Predefined 9-attack suite against GPT-4o-mini
 python main.py --mode openai
 
-# With Qwen 27B Uncensored attacker for dynamic payload generation
+# With CyberStrike 35B attacker for dynamic payload generation
 python main.py --mode openai --attacker-endpoint https://<pod-id>-8000.proxy.runpod.net/v1
 ```
 
@@ -126,6 +126,116 @@ python main.py --mode openai --attacker-endpoint https://<pod-id>-8000.proxy.run
 python main.py --mode runpod --endpoint https://<pod-id>-8000.proxy.runpod.net/v1 --target auto
 ```
 
+### Security Assessment Assistant (Human-in-the-Loop)
+
+> ⚠️ **EĞİTİM / TEST AMAÇLI ORTAM**  
+> Bu mod, güvenlik topluluğunun resmi olarak sağladığı, **kasıtlı olarak
+> zafiyetli** açık kaynak eğitim uygulamaları üzerinde çalışır:
+> - **OWASP Juice Shop** (web-uygulama seviyesi) → [owasp.org/www-project-juice-shop](https://owasp.org/www-project-juice-shop)
+> - **Metasploitable2** (network/servis seviyesi) → Rapid7 tarafından yayınlanır
+>
+> Yalnızca kendi Docker konteynerlerinizde, localhost üzerinde yetkili testler
+> içindir. Üçüncü taraf, izinsiz hiçbir sisteme bağlanılmaz.
+
+Bu mod, **insan onaylı (human-in-the-loop)** bir güvenlik değerlendirme
+asistanıdır. LLM yalnızca **öneri** sunar; hiçbir komutu doğrudan çalıştıramaz.
+Her adım terminalde gösterilir ve kullanıcının `input()` onayı (`y`/`n`) ile
+çalıştırılır.
+
+**Kapsam Kısıtı:** Yalnızca `config/allowed_targets.txt` içinde tanımlı
+hedefler kabul edilir:
+- `localhost:3000` → OWASP Juice Shop
+- `metasploitable2` → Metasploitable2 (servis adı)
+
+Kapsam dışı hedefler kod seviyesinde `is_target_allowed()` ile reddedilir ve
+`data/assessment_audit_log.jsonl` içine `REJECTED_OUT_OF_SCOPE` olarak yazılır.
+
+#### Kurulum (Docker)
+
+Tek komutla **OWASP Juice Shop**, **Metasploitable2** ve **tarama araçları
+konteyneri** (nmap, gobuster, nikto, whatweb, sqlmap, testssl.sh, searchsploit)
+ayağa kalkar. Başka hiçbir manuel `apt install` gerekmez:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d --build
+```
+
+- **Juice Shop:** `http://localhost:3000`
+- **Metasploitable2:** yalnızca localhost'a bağlı (`127.0.0.1:2222` SSH, `127.0.0.1:8081` HTTP), dış dünyaya KAPALI
+- **Araç konteyneri:** `autoredteam-assessment-tools` (aynı `assessment-net`
+  ağında; tools konteyneri Juice Shop'a `juice-shop:3000`, Metasploitable2'ye
+  `metasploitable2` servis adıyla erişir)
+
+#### Araç Erişilebilirlik Kontrolü
+
+Tüm araçların gerçekten erişilebilir olduğunu doğrulamak için:
+
+```bash
+python main.py --mode check-tools
+# veya doğrudan:
+python scripts/check_tools.py
+```
+
+Bu, her aracın sürümünü kontrol edip tablo halinde raporlar. Araçlar Docker
+konteyneri içinde çalışıyorsa `🐳 Docker konteyneri`, değilse `💻 Host` olarak
+işaretlenir.
+
+#### Değerlendirme Asistanını Çalıştırma
+
+```bash
+# Mock LLM ile (API anahtarı gerekmez)
+python main.py --mode assessment --assessment-target localhost:3000
+
+# OpenAI LLM ile (OPENAI_API_KEY .env'de olmalı)
+python main.py --mode assessment --assessment-llm-provider openai
+
+# RunPod vLLM ile (endpoint ve key verilir)
+python main.py --mode assessment --assessment-llm-provider runpod \
+    --endpoint https://<pod-id>-8000.proxy.runpod.net/v1 --api-key EMPTY
+```
+
+`--assessment-llm-provider` seçenekleri: `mock` (varsayılan), `runpod`, `openai`.
+`--endpoint` ve `--api-key` argümanları LLM bağlantısı için kullanılır.
+
+**Akış:** LLM bir sonraki adımı önerir → kullanıcı onaylar/reddeder →
+onaylanırsa güvenli wrapper ile çalıştırılır → çıktı LLM'e geri verilir →
+LLM bulguyu yorumlar ve bir sonraki öneriyi sunar. `dur` yazarak istediğiniz
+an durabilirsiniz. En fazla 20 önerilen adım (sonsuz döngü koruması).
+
+**Entegre araçlar (her biri ayrı onay adımı):**
+
+| Araç | Amaç | Güvenlik Notu |
+| :--- | :--- | :--- |
+| `nmap` | Port/servis keşfi | Yalnızca `-sV -sC` (non-destructive) |
+| `gobuster` | Dizin/endpoint keşfi | GET tabanlı keşif |
+| `nikto` | Web sunucu zafiyet taraması | Pasif tarayıcı |
+| `whatweb` | Teknoloji yığını tespiti | Pasif fingerprinting |
+| `ssl_check` | TLS/SSL konfigürasyon kontrolü | Salt okunur denetim |
+| `sqlmap` | SQL Injection **tespiti** | **Yalnızca `--batch --level=1 --risk=1`; dump/exploit YASAK** |
+| `searchsploit` | Bilinen CVE/exploit kayıtlarını listele | **LOOKUP-ONLY; exploit ÇALIŞTIRMAZ** |
+
+> 💡 **İpucu:** `nmap` bir servis/versiyon tespit ettiğinde (örn. Apache 2.2.8,
+> MySQL 5.0.51a), sıradaki mantıklı adım genelde `searchsploit` ile o versiyon
+> için bilinen zafiyetleri aramaktır.
+
+**Hedef seçimi:**
+
+```bash
+# OWASP Juice Shop (web-uygulama seviyesi)
+python main.py --mode assessment --assessment-target localhost:3000
+
+# Metasploitable2 (network/servis seviyesi)
+python main.py --mode assessment --assessment-target metasploitable2
+```
+
+**Çıktılar:**
+
+| Dosya | Açıklama |
+| :--- | :--- |
+| `data/assessment_findings.jsonl` | Kaydedilen bulgular (FIND-xxx) |
+| `reports/assessment_report.md` | OWASP WSTG referanslı değerlendirme raporu |
+| `data/assessment_audit_log.jsonl` | Onay / red / kapsam dışı denetim kayıtları |
+
 ---
 
 ## Outputs
@@ -133,19 +243,21 @@ python main.py --mode runpod --endpoint https://<pod-id>-8000.proxy.runpod.net/v
 | File | Description |
 | :--- | :--- |
 | `reports/security_audit_report.md` | Full security audit with OWASP/MITRE mapping and RAG-powered remediation steps |
+| `reports/assessment_report.md` | Human-in-the-loop security assessment report (OWASP WSTG) |
 | `data/benchmark_results.jsonl` | Hugging Face-compatible benchmark dataset |
+| `data/assessment_findings.jsonl` | Recorded assessment findings (FIND-xxx) |
 | `data/corporate.db` | SQLite corporate database with seeded injection payloads |
 
 ---
 
 ## Deploying the Attacker Model (RunPod)
 
-**Recommended GPU:** A40 (48 GB VRAM)  
-**Model:** Qwen 27B Uncensored / Abliterated (e.g. `failspy/Qwen3-30B-A3B-abliterated`)
+**Recommended GPU:** H100 (80 GB VRAM)  
+**Model:** CyberStrike 35B Abliterated (e.g. `huihui-ai/huihui-cyberstrike-offsec-35b-abliterated`)
 
 ```bash
 python3 -m vllm.entrypoints.openai.api_server \
-  --model failspy/Qwen3-30B-A3B-abliterated \
+  --model huihui-ai/huihui-cyberstrike-offsec-35b-abliterated \
   --port 8000 \
   --host 0.0.0.0 \
   --max-model-len 8192 \

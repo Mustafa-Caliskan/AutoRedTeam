@@ -1,0 +1,15 @@
+# AutoRedTeam — Security Assessment Assistant
+# İzin verilen hedefler (kapsam). Bu dosya dışındaki herhangi bir IP/domain,
+# kod seviyesinde is_target_allowed() validasyonu ile reddedilir.
+#
+# Varsayılan: yalnızca yerel Docker konteynerleri (eğitim amaçlı zafiyetli
+# ortamlar). Bu dosyayı değiştirmek kapsamı genişletir — yalnızca kendi
+# sistemleriniz üzerinde yetkili testler için kullanın.
+
+# ── Hedef Ortamlar ──────────────────────────────────────────────────────────
+# OWASP Juice Shop (web-uygulama seviyesi) — Docker, localhost:3000
+localhost:3000
+# Metasploitable2 (network/servis seviyesi) — Docker, servis adı
+metasploitable2
+# Genel localhost erişimi
+127.0.0.1

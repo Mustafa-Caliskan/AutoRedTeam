@@ -1,0 +1,50 @@
+# AutoRedTeam — Security Assessment Tools Container
+#
+# Bu image, güvenlik değerlendirme asistanının kullandığı tarama araçlarını
+# barındırır. Yalnızca YETKİLİ, eğitim amaçlı testler içindir (OWASP Juice Shop).
+#
+# Kullanım: docker compose -f docker/docker-compose.yml up -d --build
+# Araçlar bu konteyner içinde çalışır; host'taki assessment_tools.py bunları
+# "docker exec assessment-tools <komut>" ile çağırır.
+
+FROM kalilinux/kali-rolling:latest
+
+# Non-interactive apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Temel paketler + tarama araçları (apt ile kurulabilenler)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nmap \
+    gobuster \
+    nikto \
+    whatweb \
+    sqlmap \
+    exploitdb \
+    git \
+    curl \
+    ca-certificates \
+    python3 \
+    python3-pip \
+    bsdmainutils \
+    dnsutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# testssl.sh (apt paketi yok, GitHub'dan klonlanır)
+RUN git clone --depth 1 https://github.com/drwetter/testssl.sh.git /opt/testssl.sh \
+    && chmod +x /opt/testssl.sh/testssl.sh \
+    && ln -s /opt/testssl.sh/testssl.sh /usr/local/bin/testssl.sh
+
+# gobuster için wordlist (SecLists common.txt — GitHub'dan indirilir)
+RUN mkdir -p /usr/share/wordlists/dirb \
+    && curl -fsSL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt \
+       -o /usr/share/wordlists/dirb/common.txt \
+    && wc -l /usr/share/wordlists/dirb/common.txt
+
+# Araçların PATH'te olduğunu doğrula
+RUN which nmap gobuster nikto whatweb sqlmap testssl.sh searchsploit
+
+# Varsayılan çalışma dizini
+WORKDIR /workspace
+
+# Konteyner ayakta kalsın (interaktif docker exec için)
+CMD ["sleep", "infinity"]

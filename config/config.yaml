@@ -8,19 +8,19 @@ app:
 
 # Model Configuration
 models:
-  # Victim Model Configuration (Muse Glimmer / Corporate Agent)
+  # Victim Model Configuration (Corporate Agent)
   victim:
-    name: "muse-glimmer-30b"
+    name: "gpt-4o-mini"
     provider: "mock" # "mock", "runpod", "ollama", "openai"
-    endpoint_url: "http://localhost:8000/v1"
+    endpoint_url: "https://api.openai.com/v1"
     api_key: "EMPTY"
     temperature: 0.2
     max_tokens: 1024
     system_prompt_path: "config/victim_policy.txt"
   
-  # Attacker Model Configuration (Qwen 27B Uncensored)
+  # Attacker Model Configuration (CyberStrike 35B Abliterated)
   attacker:
-    name: "qwen-27b-uncensored"
+    name: "huihui-ai/huihui-cyberstrike-offsec-35b-abliterated"
     provider: "mock" # "mock", "runpod", "openai"
     endpoint_url: "http://localhost:8001/v1"
     api_key: "EMPTY"

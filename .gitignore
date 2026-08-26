@@ -31,6 +31,15 @@ venv.bak/
 .env
 config/.env
 
+# Generated Data Artifacts
+data/corporate.db
+data/*.db
+data/assessment_findings.jsonl
+data/assessment_audit_log.jsonl
+data/session_logs/
+reports/assessment_report.md
+reports/model_capability_test_report.md
+
 # Testing & Coverage
 .pytest_cache/
 .coverage

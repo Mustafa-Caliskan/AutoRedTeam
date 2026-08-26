@@ -1,0 +1,52 @@
+# AutoRedTeam — Security Assessment Assistant Test Environment
+#
+# ⚠️ EĞİTİM / TEST AMAÇLI ORTAM ⚠️
+# Bu ortam, güvenlik topluluğunun resmi olarak sağladığı, KASITLI OLARAK
+# ZAFİYETLİ olan açık kaynak eğitim uygulamalarını çalıştırır:
+#   - OWASP Juice Shop (web-uygulama seviyesi)  → https://owasp.org/www-project-juice-shop
+#   - Metasploitable2 (network/servis seviyesi) → Rapid7 tarafından yayınlanır
+#
+# Bu uygulamalar yalnızca güvenlik eğitimi ve yetkili zafiyet değerlendirmesi
+# içindir. İnternete açmayın; yalnızca localhost üzerinde çalıştırın.
+# Üçüncü taraf, izinsiz hiçbir sisteme bağlanmayın.
+
+services:
+  juice-shop:
+    image: bkimminich/juice-shop:latest
+    container_name: autoredteam-juice-shop
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - assessment-net
+
+  # Metasploitable2 — Rapid7'nin kasıtlı zafiyetli eğitim Linux dağıtımı.
+  # Yalnızca localhost'a bağlanır (127.0.0.1), dış dünyaya KAPALIDIR.
+  # Aynı assessment-net ağında olduğu için tools konteyneri bu servise
+  # "metasploitable2" servis adıyla erişir.
+  metasploitable2:
+    image: cyberacademylabs/metasploitable2:latest
+    container_name: autoredteam-metasploitable2
+    # Sadece localhost'a bağla — dış erişime kapalı
+    ports:
+      - "127.0.0.1:2222:22"   # SSH (host'tan erişim için)
+      - "127.0.0.1:8081:80"   # HTTP (host'tan erişim için)
+    restart: unless-stopped
+    networks:
+      - assessment-net
+
+  # Tarama araçlarını barındıran konteyner (nmap, gobuster, nikto, whatweb,
+  # sqlmap, testssl.sh, searchsploit). Host'taki assessment_tools.py bu
+  # konteyneri "docker exec assessment-tools <komut>" ile çağırır.
+  assessment-tools:
+    build:
+      context: .
+      dockerfile: Dockerfile.assessment-tools
+    container_name: autoredteam-assessment-tools
+    restart: unless-stopped
+    networks:
+      - assessment-net
+
+networks:
+  assessment-net:
+    driver: bridge
