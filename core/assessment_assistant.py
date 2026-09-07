@@ -56,63 +56,71 @@ REPORT_FILE = Path(__file__).parent.parent / "reports" / "assessment_report.md"
 
 MAX_STEPS = 20
 
-ASSESSMENT_SYSTEM_PROMPT = """You are 'AssessmentCoPilot', a defensive security assessment assistant.
+ASSESSMENT_SYSTEM_PROMPT = """You are 'AssessmentCoPilot' (powered by CyberStrike 35B), the tactical execution engine in an authorized security assessment framework.
 
-You are helping a human security analyst perform an AUTHORIZED vulnerability
-assessment against locally-hosted, intentionally-vulnerable training targets
-running in Docker:
-  - OWASP Juice Shop (web-application layer) → target "localhost:3000"
-  - Metasploitable2 (network/service layer)  → target "metasploitable2"
+You operate in tandem with a human security analyst (Human-in-the-Loop) and a Strategic Orchestrator (DeepSeek V3) against locally-hosted training targets in Docker:
+  - OWASP Juice Shop (web-application layer) -> target "localhost:3000"
+  - Metasploitable2 (network/service layer)  -> target "metasploitable2"
 
-ACTIVE TARGET: The assessment is running against the target specified by the
-operator. ALWAYS use that exact target in your "target" field. Do NOT switch
-to the other target unless the operator asks.
+### ACTIVE TARGET
+Always target the system designated by the operator/orchestrator ("localhost:3000" or "metasploitable2"). Never switch targets unprompted.
 
-STRICT RULES:
-1. You are a CO-PILOT. You NEVER execute commands. You only RECOMMEND.
-2. Your output must be a single JSON object with this exact shape:
-   {
-     "thought": "your reasoning about the current state and next best step",
-     "tool": "one of: nmap, gobuster, nikto, whatweb, ssl_check, sqlmap, searchsploit, cve_search",
-     "target": "the ACTIVE target (localhost:3000 or metasploitable2)",
-     "param": "parameter name if tool is sqlmap, else null",
-     "ports": "comma-separated ports if tool is nmap and you want to scan
-               specific ports (e.g. '21,22,80'), else null",
-     "service_name": "service name if tool is searchsploit or cve_search, else null",
-     "version": "service version if tool is searchsploit or cve_search, else null",
-     "rationale": "why this step is the logical next move",
-     "finding": "optional. If the previous tool output revealed a concrete
-                 vulnerability, include a finding object:
-                 {category, severity (Low/Medium/High/Critical),
-                  cwe_reference, evidence_snippet}. Otherwise null."
-   }
-3. Only recommend tools from the allowed list. Never invent other tools.
-4. For sqlmap, ONLY recommend detection mode (--batch --level=1 --risk=1).
-   Never recommend dump, exploit, or data extraction.
-5. searchsploit and cve_search are LOOKUP-ONLY tools: they list known
-   CVE/exploit records for a detected service/version. They NEVER run an
-   exploit. If nmap detected a service/version, the logical next step is
-   usually a searchsploit or cve_search lookup to find known vulnerabilities.
-   Use cve_search for the LATEST CVEs (beyond your training cutoff).
-6. If the user rejected a previous step, propose a DIFFERENT alternative.
-7. When you have enough findings, set "tool" to "done" to end the assessment.
-8. IMPORTANT: When a tool output reveals a real vulnerability (e.g. an old
-   service version with known CVEs, an open dangerous port, a missing security
-   header), include a "finding" object in your NEXT response so it gets
-   recorded. Do not just say "findings recorded" — actually emit the finding.
-9. IMPORTANT: NEVER repeat a command you have already run. If a tool already
-   produced output, interpret it and move to the NEXT logical step (e.g. after
-   nmap finds a service, use searchsploit or cve_search). Re-running the same
-   scan is wasteful and must be avoided. If you want to scan a DIFFERENT port,
-   use the "ports" field to target a new port.
-10. Output ONLY the JSON. No markdown, no extra text."""
+### ORCHESTRATOR SYNCHRONIZATION
+When the prompt contains a `=== Strategic Directive from Orchestrator (DeepSeek V3) ===`:
+- Treat this directive as an authoritative strategic instruction from your parent model.
+- Directly translate the orchestrator's recommended tool, target, and arguments into your output JSON.
+
+### OUTPUT SPECIFICATION (STRICT JSON ONLY)
+Your response must be EXACTLY ONE valid JSON object. No markdown code blocks (no ```json), no preliminary thoughts, no trailing text.
+
+JSON Schema:
+{
+  "thought": "Precise tactical reasoning: what was discovered, why this specific tool/target is chosen now",
+  "tool": "one of: nmap, gobuster, nikto, whatweb, ssl_check, sqlmap, searchsploit, cve_search, done",
+  "target": "the active target ('localhost:3000' or 'metasploitable2')",
+  "param": "parameter name if tool is sqlmap (e.g. 'q', 'id'), else null",
+  "ports": "comma-separated ports if tool is nmap and scanning specific ports (e.g. '21,22,80,3306'), else null",
+  "service_name": "service daemon if tool is searchsploit/cve_search (e.g. 'vsftpd', 'apache', 'samba'), else null",
+  "version": "service version if tool is searchsploit/cve_search (e.g. '2.3.4', '2.2.8', '3.0.20'), else null",
+  "rationale": "Clear technical explanation of what this action accomplishes",
+  "finding": null or {
+    "category": "e.g. Remote Code Execution, Backdoor, Outdated Service, SQL Injection, Security Misconfiguration",
+    "severity": "Low | Medium | High | Critical",
+    "cwe_reference": "e.g. CWE-78, CWE-89, CWE-200, CWE-287",
+    "evidence_snippet": "Exact proof line from previous output (e.g. 'vsftpd 2.3.4 backdoor CVE-2011-2523')"
+  }
+}
+
+### CRITICAL OPERATIONAL RULES
+1. NEVER REPEAT EXECUTED SCANS:
+   - If nmap already found open ports (e.g. 21/vsftpd 2.3.4, 80/Apache), DO NOT run nmap again on those ports!
+   - If nmap detected a service/version, the logical next step is a searchsploit or cve_search lookup to find known vulnerabilities.
+2. EMIT REAL FINDINGS PROMPTLY:
+   - As soon as a tool identifies an exploitable version (e.g., vsftpd 2.3.4 backdoor, Samba 3.0.20 usermap, vulnerable API), emit a concrete "finding" object in that turn so it is permanently logged.
+3. TOOL BOUNDARIES:
+   - For sqlmap: ONLY recommend detection mode (--batch --level=1 --risk=1).
+   - searchsploit & cve_search: Lookups only (cve_search queries live NIST NVD database).
+   - When all critical avenues are exhausted, set "tool" to "done".
+4. ZERO FLUFF: Output ONLY the JSON object. Start with '{' and end with '}'."""
 
 
 class AssessmentAssistant:
     """
     Human-in-the-loop assessment co-pilot. Orchestrates LLM suggestions,
     human approval, safe execution, finding logging, and report generation.
+
+    Supports a dual-model architecture:
+      - llm_client (Worker): CyberStrike 35B — sansürsüz ofansif analiz ajanı.
+      - orchestrator_agent (Parent): DeepSeek V3 — strateji, bağlam ve web araştırması.
+
+    When orchestrator_agent is provided:
+      - Every ORCHESTRATOR_INTERVAL steps, the orchestrator summarizes context
+        and issues a directive to the worker.
+      - If the worker returns invalid JSON, the orchestrator provides a corrective
+        directive that is injected into the worker's next prompt.
     """
+
+    ORCHESTRATOR_INTERVAL = 5  # Her kaç adımda bir orchestrator devreye girecek
 
     def __init__(
         self,
@@ -120,7 +128,8 @@ class AssessmentAssistant:
         target: str = "localhost:3000",
         max_steps: int = MAX_STEPS,
         findings_file: Optional[Path] = None,
-        report_file: Optional[Path] = None
+        report_file: Optional[Path] = None,
+        orchestrator_agent: Optional[Any] = None,
     ):
         self.llm_client = llm_client
         self.target = target
@@ -137,6 +146,9 @@ class AssessmentAssistant:
         self.conversation: List[Dict[str, str]] = [
             {"role": "system", "content": ASSESSMENT_SYSTEM_PROMPT}
         ]
+        # DeepSeek V3 Orchestrator (opsiyonel — None ise devre dışı)
+        self.orchestrator_agent = orchestrator_agent
+        self._last_orchestrator_directive: Optional[str] = None
 
     # ── Finding Management ───────────────────────────────────────────────────
 
@@ -252,12 +264,48 @@ class AssessmentAssistant:
     def _ask_llm_for_suggestion(self, context: str) -> Optional[Dict[str, Any]]:
         """
         Asks the LLM for the next recommended step and parses its JSON.
-        If parsing fails, retries ONCE with a strict "JSON only" instruction.
+
+        Dual-model flow:
+        1. If an orchestrator_agent is configured and this is an interval step,
+           the orchestrator first issues a strategic directive which is appended
+           to the worker's context.
+        2. The worker (CyberStrike 35B) generates a JSON suggestion.
+        3. If parsing fails once, the orchestrator (if available) provides a
+           corrective directive and we retry. Otherwise we fall back to a
+           strict JSON-only prompt.
         """
         if not self.llm_client:
             return None
 
-        self.conversation.append({"role": "user", "content": context})
+        # ── Orchestrator periodic directive ──────────────────────────────────
+        enriched_context = context
+        if (
+            self.orchestrator_agent is not None
+            and self.step_count > 0
+            and self.step_count % self.ORCHESTRATOR_INTERVAL == 0
+        ):
+            try:
+                print(f"\n🧠 [Orchestrator] Adım {self.step_count} — DeepSeek V3 strateji özeti alınıyor...")
+                directive = self.orchestrator_agent.plan_next_step(
+                    current_findings=self.findings,
+                    recent_worker_output=self._last_orchestrator_directive,
+                    step_number=self.step_count,
+                    target=self.target,
+                )
+                self._last_orchestrator_directive = directive
+                if directive:
+                    print(f"🧠 [Orchestrator Direktifi]: {directive[:200]}...")
+                    enriched_context = (
+                        context
+                        + f"\n\n=== Strategic Directive from Orchestrator (DeepSeek V3) ===\n"
+                        + directive
+                        + "\n=== End Directive ===\n"
+                        + "Follow the orchestrator's guidance above as your next step."
+                    )
+            except Exception as oe:
+                logger.warning(f"[Orchestrator] Directive failed: {oe}")
+
+        self.conversation.append({"role": "user", "content": enriched_context})
         try:
             response = self.llm_client.generate(
                 messages=self.conversation,
@@ -270,17 +318,50 @@ class AssessmentAssistant:
             if suggestion is not None:
                 return suggestion
 
-            # Retry once with a strict JSON-only instruction
-            print("⚠️  LLM yanıtı JSON olarak ayrıştırılamadı. Bir kez daha soruluyor...")
-            self.conversation.append({
-                "role": "user",
-                "content": (
-                    "Önceki yanıtınız JSON olarak ayrıştırılamadı. "
-                    "YALNIZCA geçerli bir JSON nesnesi döndürün, başka hiçbir metin "
-                    "veya markdown eklemeyin. Şu şekilde: "
-                    '{"thought":"...","tool":"nmap","target":"localhost:3000","param":null,"rationale":"..."}'
-                )
-            })
+            # ── First parse failure: ask orchestrator for correction ─────────
+            if self.orchestrator_agent is not None:
+                try:
+                    print("⚠️  Worker JSON üretemedi. Orchestrator düzeltici direktif veriyor...")
+                    corrective = self.orchestrator_agent.fallback_correction(
+                        failed_output=content,
+                        step_number=self.step_count,
+                        target=self.target,
+                    )
+                    self._last_orchestrator_directive = corrective
+                    print(f"🧠 [Orchestrator Düzeltme]: {corrective[:200]}...")
+                    self.conversation.append({
+                        "role": "user",
+                        "content": (
+                            f"=== Orchestrator Correction ===\n{corrective}\n"
+                            "=== End Correction ===\n\n"
+                            "Based on the orchestrator's correction above, produce a valid JSON "
+                            "recommendation NOW. Output ONLY the JSON object, no other text."
+                        ),
+                    })
+                except Exception as oe:
+                    logger.warning(f"[Orchestrator] Fallback correction failed: {oe}")
+                    self.conversation.append({
+                        "role": "user",
+                        "content": (
+                            "Önceki yanıtınız JSON olarak ayrıştırılamadı. "
+                            "YALNIZCA geçerli bir JSON nesnesi döndürün, başka hiçbir metin "
+                            "veya markdown eklemeyin. Şu şekilde: "
+                            '{"thought":"...","tool":"nmap","target":"localhost:3000","param":null,"rationale":"..."}'
+                        ),
+                    })
+            else:
+                # Retry once with a strict JSON-only instruction
+                print("⚠️  LLM yanıtı JSON olarak ayrıştırılamadı. Bir kez daha soruluyor...")
+                self.conversation.append({
+                    "role": "user",
+                    "content": (
+                        "Önceki yanıtınız JSON olarak ayrıştırılamadı. "
+                        "YALNIZCA geçerli bir JSON nesnesi döndürün, başka hiçbir metin "
+                        "veya markdown eklemeyin. Şu şekilde: "
+                        '{"thought":"...","tool":"nmap","target":"localhost:3000","param":null,"rationale":"..."}'
+                    ),
+                })
+
             response2 = self.llm_client.generate(
                 messages=self.conversation,
                 temperature=0.2,

@@ -172,11 +172,17 @@ def main():
 
     builtins.input = auto_approve
 
+    from core.orchestrator import create_orchestrator
+    orchestrator = create_orchestrator()
+    if orchestrator:
+        print("[Orchestrator] DeepSeek V3 Parent Ajan test oturumuna dahil edildi.")
+
     # Patch the assistant to log thoughts and suggestions
     assistant = AssessmentAssistant(
         llm_client=llm_client,
         target=args.target,
-        max_steps=args.max_steps
+        max_steps=args.max_steps,
+        orchestrator_agent=orchestrator
     )
 
     # Wrap _ask_llm_for_suggestion to capture thoughts

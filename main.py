@@ -101,7 +101,16 @@ def run_assessment_assistant(
             auto_detect_model=True
         )
 
-    assistant = AssessmentAssistant(llm_client=llm_client, target=target)
+        from core.orchestrator import create_orchestrator
+        orchestrator = create_orchestrator()
+        if orchestrator:
+            console.print("[bold cyan]🧠 DeepSeek V3 Orkestratör aktif (Parent-Worker Mimarisi Devrede)[/bold cyan]")
+
+    assistant = AssessmentAssistant(
+        llm_client=llm_client,
+        target=target,
+        orchestrator_agent=orchestrator if llm_provider != "mock" else None
+    )
     findings = assistant.run()
     report_path = assistant.generate_report(findings)
     console.print(f"[bold green]📄 Değerlendirme raporu oluşturuldu:[/bold green] [underline]{report_path}[/underline]")
