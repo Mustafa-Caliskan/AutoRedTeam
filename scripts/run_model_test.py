@@ -160,12 +160,19 @@ def main():
     approval_count = {"y": 0, "n": 0, "dur": 0}
 
     def auto_approve(prompt=""):
-        # If the prompt is asking for a manual tool selection (LLM parse failed),
-        # pick a sensible default tool instead of "y".
-        if "araç seçin" in prompt or "Bir araç seçin" in prompt:
+        p_lower = prompt.lower()
+        if "araç seçin" in p_lower:
             print("   [TEST MANUEL ARAÇ] nmap")
             return "nmap"
-        # Otherwise auto-approve the step to observe the model's decision chain
+        if "portlar" in p_lower or "port" in p_lower:
+            print("   [TEST PORT] varsayılan")
+            return ""
+        if "parametre" in p_lower:
+            return "id"
+        if "servis" in p_lower:
+            return "vsftpd"
+        if "versiyon" in p_lower:
+            return "2.3.4"
         approval_count["y"] += 1
         print(f"   [TEST OTO-ONAY] y")
         return "y"
@@ -175,13 +182,17 @@ def main():
     from core.orchestrator import create_orchestrator
     orchestrator = create_orchestrator()
     if orchestrator:
-        print("[Orchestrator] DeepSeek V3 Parent Ajan test oturumuna dahil edildi.")
+        print("[Orchestrator] DeepSeek V4 Flash Parent Ajan test oturumuna dahil edildi.")
+
+    # Each test session records its own isolated findings
+    session_findings_file = session_dir / f"{args.session_name}_findings.jsonl"
 
     # Patch the assistant to log thoughts and suggestions
     assistant = AssessmentAssistant(
         llm_client=llm_client,
         target=args.target,
         max_steps=args.max_steps,
+        findings_file=session_findings_file,
         orchestrator_agent=orchestrator
     )
 

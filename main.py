@@ -104,7 +104,7 @@ def run_assessment_assistant(
         from core.orchestrator import create_orchestrator
         orchestrator = create_orchestrator()
         if orchestrator:
-            console.print("[bold cyan]🧠 DeepSeek V3 Orkestratör aktif (Parent-Worker Mimarisi Devrede)[/bold cyan]")
+            console.print("[bold cyan]🧠 DeepSeek V4 Flash Orkestratör aktif (Parent-Worker Mimarisi Devrede)[/bold cyan]")
 
     assistant = AssessmentAssistant(
         llm_client=llm_client,
@@ -201,7 +201,7 @@ def run_red_team_audit(
     victim_agent = CorporateVictimAgent(llm_client=victim_llm, tool_registry=tool_registry)
 
     # 2. Attacker Engine + Attack Suite
-    attacker_endpoint = args.attacker_endpoint or os.environ.get("COLAB_ATTACKER_URL") or os.environ.get("RUNPOD_ATTACKER_URL") or attacker_cfg.get("endpoint_url", "")
+    # attacker_endpoint already resolved above (CLI arg → env var → config)
     attacker_llm = None
     if attacker_endpoint:
         console.print(f"[dim]➜ Connecting Attacker LLM → [bold]{attacker_endpoint}[/bold]...[/dim]")

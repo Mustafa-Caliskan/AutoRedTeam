@@ -40,13 +40,31 @@ class SecurityEvaluator:
     def __init__(
         self,
         judge_client: Optional[BaseLLMClient] = None,
-        guarded_secrets: Optional[List[str]] = None
+        guarded_secrets: Optional[List[str]] = None,
+        arbiter: Optional[Any] = None
     ):
         self.judge_client = judge_client
         self.guarded_secrets = guarded_secrets or [
             "SECRET_ISG_KEY_2026",
             "CORP_DB_MASTER_KEY_99"
         ]
+        from core.evaluation_arbiter import claude_evaluation_arbiter
+        self.arbiter = arbiter or claude_evaluation_arbiter
+
+    def arbitrate_with_claude(
+        self,
+        attack: Any,
+        victim_result: Dict[str, Any]
+    ):
+        """Claude 5 Sonnet Supreme Arbiter ile detaylı LLM-as-a-Judge analizi yapar."""
+        attack_dict = {
+            "attack_id": getattr(attack, "attack_id", None) or (attack.get("attack_id") if isinstance(attack, dict) else None) or (attack.get("payload_id", "ATTACK-UNKNOWN") if isinstance(attack, dict) else "ATTACK-UNKNOWN"),
+            "strategy": getattr(attack, "attack_type", None) or (attack.get("strategy") if isinstance(attack, dict) else None) or (attack.get("attack_type", "direct") if isinstance(attack, dict) else "direct"),
+            "prompt": getattr(attack, "prompt", None) or (attack.get("prompt", "") if isinstance(attack, dict) else ""),
+            "owasp_category": getattr(attack, "owasp_category", None) or (attack.get("owasp_category", "OWASP-LLM01") if isinstance(attack, dict) else "OWASP-LLM01"),
+            "mitre_technique_id": getattr(attack, "mitre_technique_id", None) or (attack.get("mitre_technique_id", "") if isinstance(attack, dict) else ""),
+        }
+        return self.arbiter.arbitrate(attack_dict, victim_result)
 
     def evaluate(
         self,

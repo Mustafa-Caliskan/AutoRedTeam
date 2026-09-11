@@ -9,6 +9,8 @@ Supports:
 
 import json
 import logging
+import os
+from pathlib import Path
 import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
@@ -120,6 +122,9 @@ class LLMResponse(BaseModel):
     tool_calls: Optional[List[ToolCallInfo]] = None
     raw_response: Optional[Dict[str, Any]] = None
     model_name: str = "mock-model"
+    # Baglanti/API hatasi durumunda doldurulur. Bu durumda content gecersizdir
+    # ve cagiran taraf hatayi ayirt edip kullaniciya bildirmelidir.
+    error: Optional[str] = None
 
 
 class BaseLLMClient(ABC):
@@ -131,7 +136,10 @@ class BaseLLMClient(ABC):
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict[str, Any]]] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1024
+        max_tokens: int = 1024,
+        enable_thinking: Optional[bool] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        json_schema: Optional[Dict[str, Any]] = None,
     ) -> LLMResponse:
         """Generates a chat completion given a conversation history and optional tool schemas."""
         pass
@@ -158,7 +166,10 @@ class MockLLMClient(BaseLLMClient):
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict[str, Any]]] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1024
+        max_tokens: int = 1024,
+        enable_thinking: Optional[bool] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        json_schema: Optional[Dict[str, Any]] = None,
     ) -> LLMResponse:
         last_msg = messages[-1] if messages else {"role": "user", "content": ""}
         content_text = str(last_msg.get("content", ""))
@@ -347,8 +358,24 @@ class OpenAICompatibleClient(BaseLLMClient):
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict[str, Any]]] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1024
+        max_tokens: int = 1024,
+        enable_thinking: Optional[bool] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        json_schema: Optional[Dict[str, Any]] = None,
     ) -> LLMResponse:
+        """
+        Generates a chat completion.
+
+        Args:
+            enable_thinking: For SGLang/Qwen3 MoE models (like CyberStrike 35B),
+                controls whether the model outputs <think>...</think> reasoning blocks.
+                When False for JSON-strict tasks, avoids thinking token leakage and
+                significantly reduces latency on Qwen3_5MoeForConditionalGeneration.
+                When None, extra_body is omitted (standard OpenAI / DeepSeek compatibility).
+            response_format: Explicit response_format dict for OpenAI API / vLLM.
+            json_schema: Structured output schema dict. When provided, enables constrained
+                decoding via SGLang xgrammar or OpenAI structured outputs.
+        """
         try:
             kwargs: Dict[str, Any] = {
                 "model": self.model_name,
@@ -360,7 +387,42 @@ class OpenAICompatibleClient(BaseLLMClient):
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
 
-            completion = self.client.chat.completions.create(**kwargs)
+            # Constrained Decoding / Structured Outputs
+            if response_format:
+                kwargs["response_format"] = response_format
+            elif json_schema:
+                kwargs["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "structured_output",
+                        "strict": True,
+                        "schema": json_schema
+                    }
+                }
+
+            # SGLang / Qwen3 MoE: pass enable_thinking toggle via extra_body if explicitly set
+            extra_body: Dict[str, Any] = {}
+            if enable_thinking is not None:
+                extra_body["enable_thinking"] = enable_thinking
+            if json_schema and "response_format" not in kwargs:
+                extra_body["json_schema"] = json.dumps(json_schema) if isinstance(json_schema, dict) else json_schema
+
+            if extra_body:
+                kwargs["extra_body"] = extra_body
+
+            try:
+                completion = self.client.chat.completions.create(**kwargs)
+            except Exception as api_err:
+                # If server doesn't support json_schema or response_format, fallback cleanly
+                err_str = str(api_err).lower()
+                if any(k in err_str for k in ["response_format", "json_schema", "extra_body", "unrecognized"]):
+                    logger.warning(f"Server rejected constrained parameters, retrying standard: {api_err}")
+                    kwargs.pop("response_format", None)
+                    kwargs.pop("extra_body", None)
+                    completion = self.client.chat.completions.create(**kwargs)
+                else:
+                    raise api_err
+
             choice = completion.choices[0]
             message = choice.message
 
@@ -410,7 +472,8 @@ class OpenAICompatibleClient(BaseLLMClient):
             logger.error(f"OpenAICompatibleClient hatası ({self.base_url}): {error_msg}")
             return LLMResponse(
                 content=f"[API BAĞLANTI HATASI]: {error_msg}",
-                model_name=self.model_name
+                model_name=self.model_name,
+                error=error_msg,
             )
 
     def detect_model_name(self) -> str:
@@ -424,6 +487,228 @@ class OpenAICompatibleClient(BaseLLMClient):
         except Exception as e:
             logger.warning(f"Model adı otomatik algılanamadı: {e}")
         return self.model_name
+
+
+# ---------------------------------------------------------------------------
+# Anthropic Claude Client (Claude 5 Sonnet — Supreme Arbiter & Escalation)
+# ---------------------------------------------------------------------------
+
+class AnthropicClient(BaseLLMClient):
+    """
+    Anthropic Claude API İstemcisi.
+    Claude 5 Sonnet (`claude-5-sonnet`) modelini en üst düzey değerlendirme hakemi
+    (Supreme Evaluation Arbiter) ve eskalasyon otoritesi olarak çalıştırır.
+    
+    Resmi `anthropic` SDK yüklüyse SDK üzerinden; yüklü değilse `httpx` REST API
+    üzerinden sıfır bağımlılık sorunuyla çalışır.
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+        base_url: str = "https://api.anthropic.com/v1"
+    ):
+        if not api_key and not os.getenv("ANTHROPIC_API_KEY"):
+            env_file = Path(__file__).parent.parent / ".env"
+            if env_file.exists():
+                try:
+                    from dotenv import load_dotenv
+                    load_dotenv(env_file)
+                except ImportError:
+                    with open(env_file, encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith("#") and "=" in line:
+                                k, v = line.split("=", 1)
+                                os.environ.setdefault(k.strip(), v.strip())
+
+        self.api_key = api_key if api_key is not None else os.getenv("ANTHROPIC_API_KEY", "")
+        self.model_name = model_name or os.getenv("ANTHROPIC_MODEL", "claude-5-sonnet")
+        self.base_url = base_url.rstrip("/")
+        self._sdk_client = None
+
+        if self.api_key:
+            try:
+                import anthropic
+                self._sdk_client = anthropic.Anthropic(api_key=self.api_key)
+                logger.info(f"[AnthropicClient] Resmi SDK ile başlatıldı. Model: {self.model_name}")
+            except ImportError:
+                logger.info(f"[AnthropicClient] 'anthropic' paketi bulunamadı, httpx REST fallback kullanılacak. Model: {self.model_name}")
+            except Exception as e:
+                logger.warning(f"[AnthropicClient] SDK başlatma uyarısı ({e}), httpx kullanılacak.")
+
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        temperature: float = 0.0,
+        max_tokens: int = 1024,
+        enable_thinking: Optional[bool] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        json_schema: Optional[Dict[str, Any]] = None,
+    ) -> LLMResponse:
+        """Claude 5 Sonnet ile mesaj üretir. Tool calling ve structured JSON destekler."""
+        if not self.api_key:
+            err = "ANTHROPIC_API_KEY tanımlanmamış. Lütfen .env dosyasına ekleyin."
+            logger.warning(f"[AnthropicClient] {err}")
+            return LLMResponse(
+                content=f"[API BAĞLANTI HATASI]: {err}",
+                model_name=self.model_name,
+                error=err
+            )
+
+        # 1. System prompt'u Messages API için ayır
+        system_prompts: List[str] = []
+        anthropic_messages: List[Dict[str, str]] = []
+
+        for m in messages:
+            role = m.get("role", "user")
+            content = str(m.get("content", ""))
+            if role == "system":
+                system_prompts.append(content)
+            else:
+                # Anthropic sadece 'user' ve 'assistant' rollerini kabul eder
+                norm_role = "assistant" if role == "assistant" else "user"
+                # Ardışık aynı rolleri birleştir (Anthropic API kuralı)
+                if anthropic_messages and anthropic_messages[-1]["role"] == norm_role:
+                    anthropic_messages[-1]["content"] += f"\n\n{content}"
+                else:
+                    anthropic_messages.append({"role": norm_role, "content": content})
+
+        # İlk mesaj mutlaka user olmalıdır
+        if not anthropic_messages:
+            anthropic_messages.append({"role": "user", "content": "Analyze and proceed."})
+        elif anthropic_messages[0]["role"] != "user":
+            anthropic_messages.insert(0, {"role": "user", "content": "Context provided below:"})
+
+        system_str = "\n\n".join(system_prompts) if system_prompts else None
+        if json_schema and system_str:
+            system_str += f"\n\nCRITICAL: Output MUST be strictly valid JSON conforming to this schema:\n{json.dumps(json_schema, ensure_ascii=False)}"
+        elif json_schema and not system_str:
+            system_str = f"Output MUST be strictly valid JSON conforming to this schema:\n{json.dumps(json_schema, ensure_ascii=False)}"
+
+        # 2. Araçları Anthropic formatına dönüştür
+        anthropic_tools = None
+        if tools:
+            anthropic_tools = []
+            for t in tools:
+                if t.get("type") == "function" and "function" in t:
+                    fn = t["function"]
+                    anthropic_tools.append({
+                        "name": fn.get("name"),
+                        "description": fn.get("description", ""),
+                        "input_schema": fn.get("parameters", {"type": "object", "properties": {}})
+                    })
+                elif "name" in t:
+                    anthropic_tools.append({
+                        "name": t.get("name"),
+                        "description": t.get("description", ""),
+                        "input_schema": t.get("input_schema") or t.get("parameters", {"type": "object", "properties": {}})
+                    })
+
+        # 3. Çağrıyı SDK veya HTTPX ile yap
+        try:
+            if self._sdk_client:
+                return self._generate_sdk(anthropic_messages, system_str, anthropic_tools, temperature, max_tokens)
+            else:
+                return self._generate_httpx(anthropic_messages, system_str, anthropic_tools, temperature, max_tokens)
+        except Exception as e:
+            err_msg = str(e)
+            logger.error(f"[AnthropicClient] Çağrı hatası ({self.model_name}): {err_msg}")
+            return LLMResponse(
+                content=f"[API BAĞLANTI HATASI]: {err_msg}",
+                model_name=self.model_name,
+                error=err_msg
+            )
+
+    def _generate_sdk(self, messages, system_str, tools, temperature, max_tokens) -> LLMResponse:
+        kwargs: Dict[str, Any] = {
+            "model": self.model_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        if system_str:
+            kwargs["system"] = system_str
+        if tools:
+            kwargs["tools"] = tools
+
+        if temperature is not None:
+            try:
+                import inspect
+                sig = inspect.signature(self._sdk_client.messages.create)
+                if "temperature" in sig.parameters:
+                    kwargs["temperature"] = temperature
+                else:
+                    kwargs["extra_body"] = {"temperature": temperature}
+            except Exception:
+                pass
+
+        resp = self._sdk_client.messages.create(**kwargs)
+        content_text = ""
+        tool_calls = []
+
+        for block in resp.content:
+            if getattr(block, "type", "") == "text":
+                content_text += getattr(block, "text", "")
+            elif getattr(block, "type", "") == "tool_use":
+                tool_calls.append(ToolCallInfo(
+                    id=getattr(block, "id", f"call_claude_{len(tool_calls)}"),
+                    name=getattr(block, "name", ""),
+                    arguments=getattr(block, "input", {})
+                ))
+
+        return LLMResponse(
+            content=sanitize_llm_response(content_text),
+            tool_calls=tool_calls or None,
+            model_name=self.model_name,
+            raw_response=resp.model_dump() if hasattr(resp, "model_dump") else None
+        )
+
+    def _generate_httpx(self, messages, system_str, tools, temperature, max_tokens) -> LLMResponse:
+        import httpx
+        url = f"{self.base_url}/messages"
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+        payload: Dict[str, Any] = {
+            "model": self.model_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if system_str:
+            payload["system"] = system_str
+        if tools:
+            payload["tools"] = tools
+
+        with httpx.Client(timeout=60.0) as client:
+            res = client.post(url, headers=headers, json=payload)
+            if res.status_code != 200:
+                raise RuntimeError(f"Anthropic API {res.status_code}: {res.text}")
+            data = res.json()
+
+        content_text = ""
+        tool_calls = []
+        for block in data.get("content", []):
+            b_type = block.get("type", "")
+            if b_type == "text":
+                content_text += block.get("text", "")
+            elif b_type == "tool_use":
+                tool_calls.append(ToolCallInfo(
+                    id=block.get("id", f"call_claude_{len(tool_calls)}"),
+                    name=block.get("name", ""),
+                    arguments=block.get("input", {})
+                ))
+
+        return LLMResponse(
+            content=sanitize_llm_response(content_text),
+            tool_calls=tool_calls or None,
+            model_name=self.model_name,
+            raw_response=data
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +726,10 @@ def create_llm_client(
     """Konfigürasyona göre uygun LLM istemcisini üretir."""
     if provider == "mock":
         return MockLLMClient(model_name=model_name, simulated_security_level=simulated_security)
+    elif provider in ["anthropic", "claude"]:
+        anthropic_key = api_key if (api_key and api_key != "EMPTY") else os.getenv("ANTHROPIC_API_KEY", "")
+        anthropic_model = model_name if model_name and model_name not in ["mock-model", "auto"] else os.getenv("ANTHROPIC_MODEL", "claude-5-sonnet")
+        return AnthropicClient(api_key=anthropic_key, model_name=anthropic_model)
     elif provider in ["runpod", "vllm", "ollama", "openai", "groq", "colab", "custom"]:
         if provider == "openai" and (not endpoint_url or endpoint_url == "http://localhost:8000/v1"):
             endpoint_url = "https://api.openai.com/v1"
@@ -456,3 +745,4 @@ def create_llm_client(
     else:
         logger.warning(f"Bilinmeyen provider '{provider}'. MockLLMClient'a dönülüyor.")
         return MockLLMClient(model_name=model_name)
+

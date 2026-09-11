@@ -39,6 +39,8 @@ data/assessment_audit_log.jsonl
 data/session_logs/
 reports/assessment_report.md
 reports/model_capability_test_report.md
+raporlar/
+*.pdf
 
 # Testing & Coverage
 .pytest_cache/

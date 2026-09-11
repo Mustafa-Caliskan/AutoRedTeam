@@ -1,4 +1,4 @@
-﻿"""
+"""
 AutoRedTeam - Web Search Tool.
 
 DeepSeek Orchestrator icin DuckDuckGo tabanli ucretsiz web aramasi.
@@ -22,12 +22,15 @@ def web_search(query: str, max_results: int = 5) -> str:
         Temiz metin formatinda arama sonuclari ozeti.
     """
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
     except ImportError:
-        return (
-            "[WEB_SEARCH ERROR]: 'duckduckgo-search' package not installed. "
-            "Run: pip install duckduckgo-search"
-        )
+        try:
+            from duckduckgo_search import DDGS
+        except ImportError:
+            return (
+                "[WEB_SEARCH ERROR]: Neither 'ddgs' nor 'duckduckgo-search' package is installed. "
+                "Run: pip install ddgs"
+            )
 
     try:
         results: List[dict] = []

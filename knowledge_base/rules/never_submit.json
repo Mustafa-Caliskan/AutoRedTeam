@@ -1,0 +1,169 @@
+{
+  "version": "1.0.0",
+  "source": "pentest-agents/rules/never-submit.md",
+  "description": "Anti-hallucination and quality gate to reject non-exploitable findings and false positives.",
+  "instant_kill": [
+    {
+      "id": "NK-01",
+      "pattern": "missing header",
+      "keywords": [
+        "csp",
+        "hsts",
+        "x-frame-options",
+        "content-security-policy",
+        "strict-transport-security"
+      ],
+      "reason": "Missing security headers alone without exploitable PoC."
+    },
+    {
+      "id": "NK-02",
+      "pattern": "missing email auth",
+      "keywords": [
+        "spf",
+        "dkim",
+        "dmarc"
+      ],
+      "reason": "Missing email records alone do not constitute web application compromise."
+    },
+    {
+      "id": "NK-03",
+      "pattern": "banner disclosure",
+      "keywords": [
+        "banner disclosure",
+        "version disclosure",
+        "server banner"
+      ],
+      "condition": "without_cve",
+      "reason": "Version or banner disclosure without a confirmed CVE exploit is purely informational."
+    },
+    {
+      "id": "NK-04",
+      "pattern": "graphql introspection",
+      "keywords": [
+        "graphql introspection",
+        "introspection query"
+      ],
+      "condition": "without_auth_bypass",
+      "reason": "GraphQL introspection alone is a feature unless mutations permit unauthorized state changes."
+    },
+    {
+      "id": "NK-05",
+      "pattern": "clickjacking alone",
+      "keywords": [
+        "clickjacking",
+        "framable"
+      ],
+      "condition": "without_sensitive_poc",
+      "reason": "Clickjacking without demonstration of a state-changing sensitive operator action."
+    },
+    {
+      "id": "NK-06",
+      "pattern": "self xss",
+      "keywords": [
+        "self-xss",
+        "self xss"
+      ],
+      "reason": "Requires victim to copy/paste malicious payload into their own developer console."
+    },
+    {
+      "id": "NK-07",
+      "pattern": "open redirect alone",
+      "keywords": [
+        "open redirect"
+      ],
+      "condition": "without_oauth_chain",
+      "reason": "Open redirect alone without token theft / OAuth exchange chain."
+    },
+    {
+      "id": "NK-08",
+      "pattern": "dns ssrf",
+      "keywords": [
+        "ssrf dns",
+        "dns-only ssrf",
+        "blind ssrf dns"
+      ],
+      "condition": "without_internal_exfil",
+      "reason": "DNS pingback alone without demonstration of internal data access or SSRF pivot."
+    },
+    {
+      "id": "NK-09",
+      "pattern": "cors wildcard alone",
+      "keywords": [
+        "cors wildcard",
+        "access-control-allow-origin: *"
+      ],
+      "condition": "without_credentialed_exfil",
+      "reason": "CORS wildcard (*) on unauthenticated public data is standard behavior."
+    },
+    {
+      "id": "NK-10",
+      "pattern": "logout csrf",
+      "keywords": [
+        "logout csrf"
+      ],
+      "reason": "Logging out an operator/user has minimal security impact."
+    },
+    {
+      "id": "NK-11",
+      "pattern": "internal ip in error",
+      "keywords": [
+        "internal ip",
+        "private ip in error",
+        "stack trace internal ip"
+      ],
+      "reason": "Internal IP exposure alone is low informational noise."
+    },
+    {
+      "id": "NK-12",
+      "pattern": "missing cookie flags alone",
+      "keywords": [
+        "missing httponly",
+        "missing secure flag",
+        "cookie without samesite"
+      ],
+      "condition": "without_session_theft",
+      "reason": "Missing flags alone without demonstrating session hijacking or XSS."
+    }
+  ],
+  "conditionally_valid": [
+    {
+      "have": "Open redirect",
+      "needed_chain": "OAuth code theft -> token exchange",
+      "impact": "Account Takeover (ATO)"
+    },
+    {
+      "have": "SSRF DNS-only",
+      "needed_chain": "internal service data exfiltration / metadata access",
+      "impact": "Data Breach / Cloud IAM Compromise"
+    },
+    {
+      "have": "CORS wildcard",
+      "needed_chain": "authenticated data theft PoC via fetch with credentials",
+      "impact": "Cross-origin Data Theft"
+    },
+    {
+      "have": "GraphQL introspection",
+      "needed_chain": "auth bypass on hidden mutations",
+      "impact": "Unauthorized Administrative Action"
+    },
+    {
+      "have": "S3 bucket listing",
+      "needed_chain": "sensitive secrets in bundles -> API exploitation",
+      "impact": "Cloud Account Takeover"
+    },
+    {
+      "have": "Prompt injection",
+      "needed_chain": "IDOR or unauthorized tool call via chatbot",
+      "impact": "Data Breach / Privilege Escalation"
+    }
+  ],
+  "validation_gate_questions": [
+    "1. Is there verified evidence on disk or exact response output (no hallucinated strings)?",
+    "2. Is this finding on the instant-kill list (e.g. missing CSP/HSTS header, banner grab alone)?",
+    "3. If conditionally valid, is there an active chain proving security impact?",
+    "4. Is the target and service verified within current engagement scope?",
+    "5. Was the vulnerability verified via concrete tool execution (status code, payload reflection, banner)?",
+    "6. Is there a clear severity, CWE reference, and actionable remediation?",
+    "7. Does the finding demonstrate actual business risk rather than theoretical possibility?"
+  ]
+}

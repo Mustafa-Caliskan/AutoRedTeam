@@ -1,0 +1,163 @@
+{
+  "version": "1.0.0",
+  "source": "pentest-agents/rules/chain-table.md",
+  "algorithm": [
+    "1. START with confirmed vulnerability A",
+    "2. Map what A provides (Capability Primitives: RCE, SSRF, IDOR, SQLi, Info Disclosure, etc.)",
+    "3. Search this table for next link candidate B that accepts A output as input",
+    "4. Direct worker model to execute verification for candidate B",
+    "5. If B confirmed, elevate combined severity to High/Critical and calculate terminal impact",
+    "6. Document the multi-hop attack chain narrative for executive reporting"
+  ],
+  "chains": [
+    {
+      "primitive": "SSRF",
+      "candidates": [
+        {
+          "target": "Cloud Metadata API (169.254.169.254)",
+          "technique": "AWS/GCP IAM Role Credential Extraction",
+          "terminal_impact": "Cloud Account Takeover / PrivEsc",
+          "severity": "Critical"
+        },
+        {
+          "target": "Internal Services / Localhost (127.0.0.1)",
+          "technique": "Unauthenticated Internal Admin API Access",
+          "terminal_impact": "Internal Network Compromise",
+          "severity": "High"
+        },
+        {
+          "target": "Redis / Memcached / DB ports",
+          "technique": "Gopher protocol SSRF payload injection",
+          "terminal_impact": "Remote Code Execution (RCE)",
+          "severity": "Critical"
+        }
+      ]
+    },
+    {
+      "primitive": "SQL Injection",
+      "candidates": [
+        {
+          "target": "Database System Tables / Users",
+          "technique": "Extract Password Hashes & DBA Privileges",
+          "terminal_impact": "Administrative Account Takeover",
+          "severity": "Critical"
+        },
+        {
+          "target": "Database File Functions (INTO OUTFILE / xp_cmdshell)",
+          "technique": "Write Web Shell to Document Root",
+          "terminal_impact": "Remote Code Execution (RCE)",
+          "severity": "Critical"
+        },
+        {
+          "target": "Underlying Host OS",
+          "technique": "UDF / xp_cmdshell command execution",
+          "terminal_impact": "Full Host Compromise",
+          "severity": "Critical"
+        }
+      ]
+    },
+    {
+      "primitive": "IDOR",
+      "candidates": [
+        {
+          "target": "Authentication / Session Endpoints",
+          "technique": "Fetch other user session tokens / reset tokens",
+          "terminal_impact": "Account Takeover (ATO)",
+          "severity": "Critical"
+        },
+        {
+          "target": "PII & Customer Records",
+          "technique": "Enumerate user ID sequence for mass data dump",
+          "terminal_impact": "Massive Data Breach / GDPR Violation",
+          "severity": "High"
+        },
+        {
+          "target": "Role / Permission Parameter",
+          "technique": "Modify own role to admin or tenant owner",
+          "terminal_impact": "Privilege Escalation",
+          "severity": "Critical"
+        }
+      ]
+    },
+    {
+      "primitive": "Information Disclosure",
+      "candidates": [
+        {
+          "target": "Exposed API Keys / .env / config.json",
+          "technique": "Re-use leaked credentials on administrative portal",
+          "terminal_impact": "Privilege Escalation / System Access",
+          "severity": "High"
+        },
+        {
+          "target": "Git repository disclosure (/.git)",
+          "technique": "Extract complete source code and database credentials",
+          "terminal_impact": "Full Source Code & Secret Leak",
+          "severity": "Critical"
+        },
+        {
+          "target": "Service Version Banners",
+          "technique": "Correlate with verified CVE backdoor / RCE exploit",
+          "terminal_impact": "Remote Code Execution",
+          "severity": "Critical"
+        }
+      ]
+    },
+    {
+      "primitive": "Arbitrary File Upload",
+      "candidates": [
+        {
+          "target": "Web Document Root",
+          "technique": "Upload PHP/JSP/ASPX web shell with bypass extensions",
+          "terminal_impact": "Remote Code Execution (RCE)",
+          "severity": "Critical"
+        },
+        {
+          "target": "SVG / HTML content",
+          "technique": "Stored Cross-Site Scripting (XSS) with session stealing",
+          "terminal_impact": "Session Hijacking / ATO",
+          "severity": "High"
+        }
+      ]
+    },
+    {
+      "primitive": "LLM / AI Prompt Injection",
+      "candidates": [
+        {
+          "target": "Agent Tool Calling Interface",
+          "technique": "Manipulate model into invoking high-privilege tool",
+          "terminal_impact": "Unauthorized Remote Action / Goal Hijacking",
+          "severity": "Critical"
+        },
+        {
+          "target": "RAG Vector Store / Database",
+          "technique": "Poison context to exfiltrate proprietary document data",
+          "terminal_impact": "Confidential Data Exfiltration",
+          "severity": "High"
+        }
+      ]
+    },
+    {
+      "primitive": "Privilege Escalation",
+      "candidates": [
+        {
+          "target": "SUID Binaries & Capabilities (/usr/bin/nmap, sudoers, SUID sh)",
+          "technique": "GTFOBins execution to spawn interactive root shell (UID=0)",
+          "terminal_impact": "Full Operating System & Root Takeover",
+          "severity": "Critical"
+        },
+        {
+          "target": "Vulnerable Daemons (vsftpd 2.3.4, Samba 3.0.20, DistCC, UnrealIRCd)",
+          "technique": "Direct root backdoor or root-privileged daemon command execution",
+          "terminal_impact": "Root Shell Access without Local Credentials",
+          "severity": "Critical"
+        },
+        {
+          "target": "Database to Host OS (MySQL UDF / xp_cmdshell)",
+          "technique": "Inject shared object (.so) library to execute root commands from database service",
+          "terminal_impact": "Privilege Escalation from Database to Host Operating System",
+          "severity": "Critical"
+        }
+      ]
+    }
+  ]
+}

@@ -466,13 +466,13 @@ def test_model_finding_capture(tmp_path, monkeypatch):
         "cwe_reference": "CWE-937",
         "evidence_snippet": "vsftpd 2.3.4 backdoor (EDB-ID 17491)"
     }
-    finding_id = assistant._record_model_finding(finding, current_tool="searchsploit")
+    finding_id = assistant._record_model_finding(finding, current_tool="nmap")
     assert finding_id.startswith("FIND-")
 
     # Verify it was written to the findings file
     content = findings_file.read_text(encoding="utf-8")
     assert "vsftpd" in content
-    assert "searchsploit" in content
+    assert "nmap" in content
     assert "High" in content
 
 

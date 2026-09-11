@@ -23,68 +23,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+# Ortak kapsam/docker yardimcilari (DRY - tek kaynak)
+from core.scope import (
+    ALLOWED_TARGETS_FILE,
+    TARGET_SERVICE_MAP,
+    load_allowed_targets,
+    is_target_allowed,
+    log_audit as _log_audit,
+)
 
-ALLOWED_TARGETS_FILE = Path(__file__).parent.parent / "config" / "allowed_targets.txt"
-AUDIT_LOG_FILE = Path(__file__).parent.parent / "data" / "assessment_audit_log.jsonl"
+logger = logging.getLogger(__name__)
 
 # Docker tools container name (see docker/docker-compose.yml)
 TOOLS_CONTAINER = os.environ.get("ASSESSMENT_TOOLS_CONTAINER", "autoredteam-assessment-tools")
-
-# Target alias → Docker service name mapping.
-# When tools run inside the assessment-net Docker network, these aliases
-# resolve to the corresponding container service names. Each entry maps a
-# user-facing target alias to the actual Docker service name.
-# NOTE: 127.0.0.1 is intentionally NOT mapped here — it is ambiguous across
-# multiple target environments. Use the explicit service aliases instead.
-TARGET_SERVICE_MAP = {
-    "localhost:3000": os.environ.get("JUICE_SHOP_SERVICE", "juice-shop"),
-    "localhost": os.environ.get("JUICE_SHOP_SERVICE", "juice-shop"),
-    "metasploitable2": os.environ.get("METASPLOITABLE2_SERVICE", "metasploitable2"),
-}
-
-
-# ── Scope Validation ─────────────────────────────────────────────────────────
-
-def load_allowed_targets() -> List[str]:
-    """Loads the allow-listed targets from config/allowed_targets.txt."""
-    targets: List[str] = []
-    if ALLOWED_TARGETS_FILE.exists():
-        try:
-            with open(ALLOWED_TARGETS_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        targets.append(line)
-        except Exception as e:
-            logger.error(f"Could not read allowed targets file: {e}")
-    return targets
-
-
-def is_target_allowed(target: str) -> bool:
-    """
-    Code-level scope validation. Returns True only if the target is
-    explicitly allow-listed in config/allowed_targets.txt.
-    """
-    allowed = load_allowed_targets()
-    normalized = target.strip().lower()
-    if normalized in allowed:
-        return True
-    # Allow a bare hostname/port match (e.g. "localhost:3000" vs "localhost")
-    for entry in allowed:
-        if normalized == entry:
-            return True
-    return False
-
-
-def _log_audit(entry: Dict[str, Any]) -> None:
-    """Appends an audit record to data/assessment_audit_log.jsonl."""
-    try:
-        AUDIT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(AUDIT_LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception as e:
-        logger.error(f"Could not write audit log: {e}")
 
 
 def _reject_out_of_scope(target: str, tool: str) -> Dict[str, Any]:
@@ -236,9 +187,14 @@ def suggest_nmap_scan(target: str, approved: bool = False, ports: Optional[str] 
     exec_host = _resolve_host(target)
     if ports:
         exec_port = ports
+        command = f"nmap -sV -sC {exec_host} -p {exec_port}"
+    elif "metasploitable" in target.lower():
+        # Comprehensive port coverage for Metasploitable2 attack surface
+        exec_port = "21,22,23,25,80,111,139,445,512,513,514,1099,1524,2049,2121,3306,3632,5432,5900,6667,8080,8180"
+        command = f"nmap -sV -sC {exec_host} -p {exec_port}"
     else:
         exec_port = _resolve_port(target)
-    command = f"nmap -sV -sC {exec_host} -p {exec_port}"
+        command = f"nmap -sV -sC {exec_host} -p {exec_port}"
     rationale = (
         "Port ve servis keşfi: hedefte açık portları ve çalışan servis "
         "versiyonlarını tespit eder. Yalnızca standart, non-destructive "
@@ -427,6 +383,28 @@ def suggest_cve_search(service_name: str, version: str = "", approved: bool = Fa
     )
 
 
+def suggest_web_search(query: str, approved: bool = False) -> Dict[str, Any]:
+    """DuckDuckGo üzerinden gerçek zamanlı web araması yapar (LOOKUP-ONLY)."""
+    from core.web_search import web_search
+    clean_query = query.strip()
+    if approved:
+        res = web_search(clean_query)
+        return {
+            "status": "APPROVED",
+            "tool": "web_search",
+            "target": clean_query,
+            "command": f"web_search '{clean_query}'",
+            "output": res
+        }
+    return {
+        "status": "AWAITING_APPROVAL",
+        "tool": "web_search",
+        "target": clean_query,
+        "command": f"web_search '{clean_query}'",
+        "rationale": "DuckDuckGo web araması ile canlı CVE ve exploit araştırması."
+    }
+
+
 # ── Tool Registry ────────────────────────────────────────────────────────────
 
 ASSESSMENT_TOOLS: Dict[str, Dict[str, Any]] = {
@@ -477,5 +455,11 @@ ASSESSMENT_TOOLS: Dict[str, Dict[str, Any]] = {
         "description": "NVD'den canlı CVE istihbaratı (LOOKUP-ONLY, güncel CVE'ler)",
         "function": suggest_cve_search,
         "params": ["service_name", "version"]
+    },
+    "web_search": {
+        "name": "web_search",
+        "description": "Canlı web araması (DuckDuckGo CVE/exploit PoC istihbaratı)",
+        "function": suggest_web_search,
+        "params": ["query"]
     },
 }

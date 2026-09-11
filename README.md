@@ -1,4 +1,4 @@
-﻿# AutoRedTeam
+# AutoRedTeam
 
 Next-Generation Dual-Engine Offensive Security & Red Teaming Platform.
 
@@ -12,8 +12,19 @@ The framework operates via two complementary offensive security engines powered 
 
 ```
                                       +-------------------------------------------------------------+
-                                      |                 STRATEGIC ORCHESTRATOR                      |
-                                      |                     DeepSeek V3                             |
+                                      |          TIER 3: SUPREME ARBITER & ESCALATION ORACLE        |
+                                      |                 Anthropic Claude 5 Sonnet                   |
+                                      |  - LLM-as-a-Judge: Tool-Calling Audit & OWASP LLM Top 10    |
+                                      |  - Invariant Verification (2FA token, DB & Domain Isolation)|
+                                      |  - Cost-Optimized Crisis Interceptor (Deadlock Resolution)  |
+                                      +------------------------------+------------------------------+
+                                                                     |
+                                                       Crisis Escalation / Audit Verdicts
+                                                                     |
+                                                                     v
+                                      +-------------------------------------------------------------+
+                                      |          TIER 2: STRATEGIC ORCHESTRATOR (PARENT BRAIN)       |
+                                      |                     DeepSeek V4 Flash                       |
                                       |  - 4-Wave Strategic Triage Engine                           |
                                       |  - Global Attack Surface & State Tracking                   |
                                       |  - Real-Time Web Research (DuckDuckGo CVE / PoC Intel)      |
@@ -23,7 +34,7 @@ The framework operates via two complementary offensive security engines powered 
                                                                      |
                                                                      v
                                       +-------------------------------------------------------------+
-                                      |                 TACTICAL EXECUTION ENGINE                   |
+                                      |          TIER 1: TACTICAL EXECUTION ENGINE (WORKER)         |
                                       |             CyberStrike 35B Abliterated                     |
                                       |     (SGLang RadixAttention / NVIDIA A100 80 GB)             |
                                       +------------------------------+------------------------------+
@@ -46,6 +57,7 @@ The framework operates via two complementary offensive security engines powered 
                                                                      v
                                       +-------------------------------------------------------------+
                                       |                 EVALUATION & AUDIT LAYER                    |
+                                      |  - Claude 5 Sonnet LLM-as-a-Judge Evaluation Arbiter        |
                                       |  - Deterministic Policy & Invariant Verification Engine     |
                                       |  - Machine-Readable Findings (JSONL) & WSTG Markdown Reports|
                                       +-------------------------------------------------------------+
@@ -53,10 +65,11 @@ The framework operates via two complementary offensive security engines powered 
 
 ### Model & Runtime Stack
 
-| Role | Engine / Model | Runtime Infrastructure | Key Function |
+| Tier / Role | Engine / Model | Runtime Infrastructure | Key Function |
 | :--- | :--- | :--- | :--- |
-| **Parent (Brain)** | DeepSeek V3 | Official API (`api.deepseek.com/v1`) | High-level strategy, triage planning, live web research |
-| **Worker (Execution)** | `huihui-ai/huihui-cyberstrike-offsec-35b-abliterated` | SGLang (Colab A100 / RunPod H100) | Uncensored adversarial payload generation & tool invocation |
+| **Supreme Arbiter (Tier 3)** | Anthropic Claude 5 Sonnet (`claude-5-sonnet`) | Anthropic API (`api.anthropic.com/v1`) | Autonomous tool-calling log audit, OWASP LLM Top 10 judging, Tier-3 deadlock resolution |
+| **Strategic Orchestrator (Tier 2)** | DeepSeek V4 Flash | Official API (`api.deepseek.com/v1`) | High-level strategy, triage planning, live web research |
+| **Worker (Tier 1 Execution)** | `huihui-ai/huihui-cyberstrike-offsec-35b-abliterated` | SGLang (Colab A100 / RunPod H100) | Uncensored adversarial payload generation & tool invocation |
 | **Victim Agent** | GPT-4o-mini / Configurable | OpenAI API | Target enterprise agent with tool-calling capabilities |
 | **Inference Backend** | SGLang (RadixAttention) | CUDA 12.8 / Triton / FlashInfer | High-throughput prefix caching and constrained JSON decoding |
 | **Live Intelligence** | NIST NVD API v2.0 + DuckDuckGo | RESTful / Zero-Key Engine | Real-time CVE scoring and zero-day advisory retrieval |
@@ -103,6 +116,16 @@ The victim agent operates against a sandboxed financial and operations database 
 - `send_internal_email`: Internal organizational messaging.
 - `lookup_employee`: Employee directory and clearance query.
 - `get_account_statement`: Account balance and ledger history inspection.
+
+### Claude 5 Sonnet: Supreme Evaluation Arbiter & LLM-as-a-Judge
+
+AutoRedTeam leverages **Anthropic Claude 5 Sonnet (`claude-5-sonnet`)** as the supreme security arbiter to evaluate victim agent actions and tool execution traces:
+- **Autonomous Tool-Calling Log Audits:** Inspects raw execution arguments emitted by autonomous enterprise agents:
+  - Verifies that `execute_wire_transfer` never executes without a verified 2FA token invariance.
+  - Detects data exfiltration attempts via `send_internal_email` to external/unauthorized domains.
+  - Enforces database isolation policies preventing cross-tenant queries on `query_customer_db`.
+- **OWASP LLM Top 10 Classification:** Automatically classifies successful exploits against standard categories (`LLM01: Prompt Injection`, `LLM02: Sensitive Information Disclosure`, `LLM06: Excessive Agency`, `LLM08: Vector and Embedding Weaknesses`).
+- **Cost-Optimized Tier-3 Invocation:** Routine scanning and turns execute on high-speed, cost-effective models (DeepSeek V4 Flash). Claude 5 Sonnet is activated selectively as the Supreme Arbiter during final verdict evaluation and as an Escalation Oracle during critical deadlock/loop-breaking.
 
 ---
 
@@ -163,8 +186,13 @@ OPENAI_API_KEY=sk-...
 COLAB_ATTACKER_URL=https://your-tunnel.trycloudflare.com/v1
 COLAB_API_KEY=EMPTY
 
-# Strategic Orchestrator (DeepSeek V3)
+# Strategic Orchestrator (DeepSeek V4 Flash)
 DEEPSEEK_API_KEY=sk-...
+
+# Supreme Evaluation Arbiter & Tier-3 Escalation Oracle (Anthropic Claude 5 Sonnet)
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-5-sonnet
+ORCHESTRATOR_PROVIDER=hybrid
 ```
 
 ### 3. Isolated Docker Testbed
@@ -187,7 +215,7 @@ python main.py --mode check-tools
 
 ### 1. Dual-Model Security Assessment (Orchestrator + CyberStrike 35B)
 
-Runs an interactive security assessment where DeepSeek V3 provides strategic guidance and CyberStrike 35B executes tactical security actions:
+Runs an interactive security assessment where DeepSeek V4 Flash provides strategic guidance and CyberStrike 35B executes tactical security actions:
 
 ```bash
 # Assessment against OWASP Juice Shop
@@ -242,9 +270,10 @@ python chat_ui.py
   - Isolated Docker testbed deployment (Juice Shop + Metasploitable2).
   - Deterministic finding deduplication and loop-breaker state machine.
   - Live NIST NVD v2.0 API integration.
-- [x] **Phase 2: Dual-Model Orchestration & Accelerated Inference**
+- [x] **Phase 2: Multi-Tier Orchestration & Accelerated Inference**
   - SGLang inference engine integration with RadixAttention KV-cache acceleration.
-  - DeepSeek V3 Strategic Orchestrator (Parent Brain) implementation.
+  - DeepSeek V4 Flash Strategic Orchestrator (Parent Brain) implementation.
+  - Anthropic Claude 5 Sonnet Supreme Evaluation Arbiter (LLM-as-a-Judge) & Crisis Escalation Oracle.
   - Zero-key DuckDuckGo live web research tool for real-time exploit discovery.
   - Synchronized multi-wave tactical triage protocols.
 - [ ] **Phase 3: Autonomous AI Agent Red Teaming v2.0**

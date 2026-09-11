@@ -27,6 +27,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     bsdmainutils \
     dnsutils \
+    netcat-openbsd \
+    sshpass \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # testssl.sh (apt paketi yok, GitHub'dan klonlanır)
@@ -41,7 +44,13 @@ RUN mkdir -p /usr/share/wordlists/dirb \
     && wc -l /usr/share/wordlists/dirb/common.txt
 
 # Araçların PATH'te olduğunu doğrula
-RUN which nmap gobuster nikto whatweb sqlmap testssl.sh searchsploit
+RUN which nmap gobuster nikto whatweb sqlmap testssl.sh searchsploit sshpass nc
+
+# Exploit betikleri /opt/art/exploits/ altina docker-compose volume ile
+# bind-mount edilir (bkz. docker-compose.yml). Bu sayede betik guncellemeleri
+# icin imaji yeniden build etmeye gerek kalmaz. Dizin yine de olusturulur ki
+# volume olmadan da konteyner calissin.
+RUN mkdir -p /opt/art/exploits
 
 # Varsayılan çalışma dizini
 WORKDIR /workspace

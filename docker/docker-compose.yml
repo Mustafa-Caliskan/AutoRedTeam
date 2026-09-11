@@ -40,10 +40,15 @@ services:
   # konteyneri "docker exec assessment-tools <komut>" ile çağırır.
   assessment-tools:
     build:
-      context: .
-      dockerfile: Dockerfile.assessment-tools
+      context: ..
+      dockerfile: docker/Dockerfile.assessment-tools
     container_name: autoredteam-assessment-tools
     restart: unless-stopped
+    # Exploit betikleri host'tan bind-mount edilir (read-only). Boylece
+    # scripts/exploits/ altinda bir guncelleme yapildiginda imaji yeniden
+    # build etmeye gerek kalmaz; degisiklik aninda konteynere yansir.
+    volumes:
+      - ../scripts/exploits:/opt/art/exploits:ro
     networks:
       - assessment-net
 
