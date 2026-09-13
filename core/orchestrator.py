@@ -99,6 +99,7 @@ class OrchestratorAgent:
         target: str,
         extra_context: Optional[str] = None,
         worker_activity: Optional[str] = None,
+        attack_surface_tree: Optional[str] = None,
     ) -> str:
         """
         Mevcut durumu analiz edip Worker'a (CyberStrike 35B) verilecek
@@ -111,12 +112,21 @@ class OrchestratorAgent:
             target: Hedef sistem (ornek: 'metasploitable2', 'localhost:3000')
             extra_context: Ek baglam metni (opsiyonel)
             worker_activity: Worker'in son islem gecmisi (tekrar/takilma tespiti icin)
+            attack_surface_tree: L0/L1 saldırı yüzeyi ağacı (opsiyonel)
         
         Returns:
             Worker ajana verilecek gorev direktifi (duz metin).
         """
         # Ozet baglamı oluştur
         findings_summary = self._summarize_findings(current_findings)
+
+        # Saldırı yüzeyi ağacını otomatik çek (verilmediyse)
+        if not attack_surface_tree:
+            try:
+                from core.context_engine import context_engine
+                attack_surface_tree = context_engine.render_attack_surface_tree(target)
+            except Exception:
+                attack_surface_tree = None
         
         context_parts = [
             f"=== Assessment Context ===",
@@ -129,6 +139,9 @@ class OrchestratorAgent:
             f"=== Recent Worker Output ===",
             recent_worker_output or "(no output yet)",
         ]
+
+        if attack_surface_tree:
+            context_parts += ["", f"=== Attack Surface Tree (L0/L1 Live State) ===", attack_surface_tree]
         
         if worker_activity:
             context_parts += ["", f"=== Worker Activity (tekrar/takilma tespiti) ===", worker_activity]
@@ -229,6 +242,28 @@ class OrchestratorAgent:
             "concrete parameters."
         )
 
+    def fallback_correction(self, failed_output: str, step_number: int, target: str) -> str:
+        """
+        CyberStrike 35B gecersiz JSON veya hata dondurdugunda devreye girer
+        ve worker'a duzeltici bir yonlendirme verir.
+
+        Args:
+            failed_output: Worker'in hatali ciktisi
+            step_number: Hata yasanan adim
+            target: Hedef sistem
+        
+        Returns:
+            Duzeltme direktifi (duz metin).
+        """
+        correction_prompt = (
+            f"The worker agent (CyberStrike 35B) returned an invalid or incomplete output "
+            f"at step {step_number} for target '{target}'.\n\n"
+            f"=== Failed Output ===\n{failed_output[:500]}\n\n"
+            "Please provide a corrective directive: a clearer, simpler instruction "
+            "for what the worker should do next. Focus on a single tool call with "
+            "concrete parameters."
+        )
+
         messages = [
             {"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT},
             {"role": "user", "content": correction_prompt}
@@ -246,6 +281,7 @@ class OrchestratorAgent:
         current_findings: List[Dict[str, Any]],
         step_number: int,
         target: str,
+        attack_surface_tree: Optional[str] = None,
     ) -> str:
         """
         Worker bir yerde takilip kaldiginda (tekrar tespiti / exploit'e gecmemesi)
@@ -261,11 +297,21 @@ class OrchestratorAgent:
         """
         findings_summary = self._summarize_findings(current_findings)
 
+        if not attack_surface_tree:
+            try:
+                from core.context_engine import context_engine
+                attack_surface_tree = context_engine.render_attack_surface_tree(target)
+            except Exception:
+                attack_surface_tree = None
+
+        tree_block = f"=== Attack Surface Tree (L0/L1 Live State) ===\n{attack_surface_tree}\n\n" if attack_surface_tree else ""
+
         rescue_prompt = (
             f"You are the Chief Strategic Orchestrator. Your worker (CyberStrike 35B) is STUCK "
             f"and needs your expert rescue at step {step_number} for target '{target}'.\n\n"
             f"=== Worker Activity (son islemler & tekrar tespiti) ===\n"
             f"{worker_activity}\n\n"
+            f"{tree_block}"
             f"=== Recent Worker Output ===\n"
             f"{recent_worker_output[:800]}\n\n"
             f"=== Findings So Far ===\n"
@@ -301,6 +347,7 @@ class OrchestratorAgent:
         step_number: int,
         target: str,
         visited_actions: Optional[set] = None,
+        attack_surface_tree: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         DeepSeek V4 Flash directly generates the structured JSON tool recommendation
@@ -308,11 +355,20 @@ class OrchestratorAgent:
         """
         findings_summary = self._summarize_findings(current_findings)
         visited_str = ", ".join([str(a) for a in (visited_actions or set())])
-        
+
+        if not attack_surface_tree:
+            try:
+                from core.context_engine import context_engine
+                attack_surface_tree = context_engine.render_attack_surface_tree(target)
+            except Exception:
+                attack_surface_tree = None
+        tree_section = f"Current Attack Surface Tree:\n{attack_surface_tree}\n\n" if attack_surface_tree else ""
+
         prompt = (
             f"You are the senior assessment co-pilot. The worker failed to produce valid JSON.\n"
             f"Target: {target}\n"
             f"Step: {step_number}\n"
+            f"{tree_section}"
             f"Findings so far:\n{findings_summary}\n"
             f"Already executed actions: {visited_str}\n\n"
             f"Output ONLY a single valid JSON object recommending the next best tool call.\n"
@@ -549,6 +605,7 @@ class HybridEscalationOrchestrator(OrchestratorAgent):
         current_findings: List[Dict[str, Any]],
         step_number: int,
         target: str,
+        attack_surface_tree: Optional[str] = None,
     ) -> str:
         """
         Worker takıldığında Tier-3 Escalation Oracle olarak Claude 5 Sonnet'e eskalasyon yapar.
@@ -570,6 +627,7 @@ class HybridEscalationOrchestrator(OrchestratorAgent):
                         current_findings=current_findings,
                         step_number=step_number,
                         target=target,
+                        attack_surface_tree=attack_surface_tree,
                     )
                     if directive and not directive.startswith("[API BAĞLANTI HATASI]"):
                         return f"[Tier-3 Oracle ({model_tag})]: {directive}"
@@ -585,6 +643,7 @@ class HybridEscalationOrchestrator(OrchestratorAgent):
             current_findings=current_findings,
             step_number=step_number,
             target=target,
+            attack_surface_tree=attack_surface_tree,
         )
 
     def direct_json_suggestion(
@@ -593,6 +652,7 @@ class HybridEscalationOrchestrator(OrchestratorAgent):
         step_number: int,
         target: str,
         visited_actions: Optional[set] = None,
+        attack_surface_tree: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Worker JSON üretemediğinde önce DeepSeek dener. Başarısız olursa Claude 5 Sonnet'e devreder.
@@ -602,6 +662,7 @@ class HybridEscalationOrchestrator(OrchestratorAgent):
             step_number=step_number,
             target=target,
             visited_actions=visited_actions,
+            attack_surface_tree=attack_surface_tree,
         )
         if res is not None:
             return res
@@ -617,6 +678,7 @@ class HybridEscalationOrchestrator(OrchestratorAgent):
                         step_number=step_number,
                         target=target,
                         visited_actions=visited_actions,
+                        attack_surface_tree=attack_surface_tree,
                     )
                 finally:
                     self.client = original_client

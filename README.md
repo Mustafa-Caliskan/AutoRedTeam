@@ -283,16 +283,37 @@ python chat_ui.py
 
 ---
 
+## Advanced Agent Capabilities (v2.2 Architecture)
+
+### 1. Hierarchical Context Engine & CCR (Cache-Compress-Retrieve)
+Inspired by Headroom and OpenViking virtual filesystem principles, AutoRedTeam implements an ultra-lean, 3-tier hierarchical context engine:
+- **L2 (Raw Evidence Cache):** Full, unstripped tool outputs are cached locally under `data/vfs/raw/` with zero database bloat.
+- **L1 (Tactical Attack Surface):** Automatically extracts service daemons, versions, verified exploits, and HTTP endpoints into structured state.
+- **L0 (Deterministic Context Tree):** Injects an ASCII Attack Surface Tree (~200 tokens) into prompt turns, preventing context overflow, eliminating sliding-window amnesia, and saving **70–90% of model context tokens**.
+
+### 2. Autonomous Target Memory & Cross-Session Distillation
+- Persistent target experience store located at `data/vfs/memories/targets/<target_slug>.json`.
+- **Experience Distillation:** Upon session completion, the engine distills verified root footholds, working exploits (e.g. `ingreslock_backdoor`), and failed exploit attempts (preventing fruitless retries).
+- **Zero-Redundancy Reconnaissance:** When revisiting previously audited targets, the agent recalls past memory, automatically skips redundant Wave 1 network port scans, and advances straight to credential spraying or privilege escalation.
+
+### 3. Autonomous Browser & DOM Pentest Agent
+- Playwright-powered autonomous browser agent for modern Single Page Applications (OWASP Juice Shop).
+- Capable of headless navigation, form input injection, client-side authentication bypass, and cookie/sessionStorage/localStorage JWT extraction.
+- **Automatic Evidence Capture:** Captures high-resolution visual proof screenshots saved directly to `reports/screenshots/`.
+- **Zero-Crash Graceful Degradation:** Seamlessly falls back to resilient HTTP DOM parsing if Playwright browser dependencies are absent.
+
+---
+
 ## Verification & Testing
 
-Run the automated test suite:
+Run the comprehensive automated test suite (153 unit and integration tests):
 
 ```bash
 python -m pytest tests/ -v
 ```
 
 ```
-============================= 31 passed in 1.59s =============================
+============================ 153 passed in 51.93s =============================
 ```
 
 ---

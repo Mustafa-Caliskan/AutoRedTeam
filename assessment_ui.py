@@ -20,11 +20,11 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from urllib.parse import urlparse, parse_qs
 
-# Force UTF-8 on Windows
+# Force UTF-8 and unbuffered line output on Windows
 if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+        sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
     except AttributeError:
         pass
 
@@ -138,9 +138,10 @@ HTML_PAGE = """<!DOCTYPE html>
                     <option value="8">8 Adım (Hızlı)</option>
                     <option value="12">12 Adım</option>
                     <option value="16" selected>16 Adım (Önerilen)</option>
-                    <option value="20">20 Adım</option>
-                    <option value="24">24 Adım (Kapsamlı)</option>
+                    <option value="24">24 Adım</option>
                     <option value="32">32 Adım (Derinlemesine)</option>
+                    <option value="50">50 Adım (Genişletilmiş)</option>
+                    <option value="70">70 Adım (Tam Sızma / Bütün Zafiyetler)</option>
                 </select>
             </div>
 
@@ -1165,14 +1166,29 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
 
         # Run assessment loop and stream events
         step = 0
-        no_progress_count = 0  # Ardışık ilerlemesiz adım sayacı (sonsuz döngü koruması)
+        # Ardışık ilerlemesiz adım sayacı (sonsuz döngü koruması).
+        # NOT: Bu sayaç yalnızca sistem YENİ bir eylem üretemediğinde artar.
+        # Tekrar eden bir eylem tespit edilip deterministik fallback ile yeni bir
+        # servise geçildiğinde ilerleme sayılır ve sayaç sıfırlanır. Eşik, modelin
+        # geçici JSON/tekrar sorunlarına tolerans tanıyacak kadar yüksek tutulur.
+        no_progress_count = 0
+        NO_PROGRESS_LIMIT = 12
+        # Model takılma tespiti: worker aynı eylemi üst üste kaç kez önerdi?
+        # CyberStrike 35B gibi küçük modeller uzun bağlamda aynı eylemi
+        # tekrarlamaya eğilimlidir. Bu sayaç eşiği aşınca modeli tamamen
+        # devre dışı bırakıp deterministik kapsam motoruna geçeriz; böylece
+        # değerlendirme modelin takılmasına rağmen tüm servisleri kapsar.
+        model_stuck_count = 0
+        MODEL_STUCK_LIMIT = 3
+        last_model_action_key = None
+        deterministic_mode = False
         while step < max_steps:
             # Tarayici baglantisi koptuysa: interaktif modda durdur, otonom modda teste devam et
             if getattr(self, "_client_disconnected", False) and not autonomous:
                 print("[UI] Client disconnected in interactive mode; stopping assessment loop.")
                 break
             # Sonsuz dongu korumasi: cok fazla ilerlemesiz adim olursa bitir
-            if no_progress_count >= 5:
+            if no_progress_count >= NO_PROGRESS_LIMIT:
                 self.send_sse({
                     "type": "error",
                     "message": "Çok fazla ilerlemesiz adım (loop breaker). Değerlendirme durduruldu."
@@ -1219,6 +1235,59 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
                 })
                 suggestion = None
 
+            # ── MODEL TAKILMA TESPİTİ ────────────────────────────────────────
+            # Worker aynı eylemi üst üste öneriyorsa (küçük modellerin uzun
+            # bağlamda tipik davranışı), modeli devre dışı bırakıp deterministik
+            # kapsam motoruna geçeriz. Böylece değerlendirme modelin takılmasına
+            # rağmen TÜM servisleri kapsar.
+            if suggestion and suggestion.get("tool") not in ("done", None):
+                _m_svc = suggestion.get("service_name")
+                if suggestion.get("tool") == "exploit":
+                    _m_svc = suggestion.get("exploit") or _m_svc
+                elif suggestion.get("tool") == "privesc":
+                    _m_svc = suggestion.get("privesc") or _m_svc
+                _model_key = assistant._action_key(
+                    suggestion.get("tool", ""), target,
+                    suggestion.get("ports"), _m_svc, suggestion.get("version"),
+                )
+                if _model_key == last_model_action_key:
+                    model_stuck_count += 1
+                else:
+                    model_stuck_count = 0
+                    last_model_action_key = _model_key
+
+                if model_stuck_count >= MODEL_STUCK_LIMIT and not deterministic_mode:
+                    deterministic_mode = True
+                    print(f"[DIAG] Model stuck on '{_model_key}' x{model_stuck_count}. Switching to deterministic coverage mode.")
+                    self.send_sse({
+                        "type": "orchestrator_directive",
+                        "step": step,
+                        "directive": (
+                            "🧭 [Sistem] Worker modeli aynı eylemi tekrarlıyor. "
+                            "Deterministik kapsam motoruna geçiliyor; kalan tüm servisler sırayla test edilecek."
+                        )
+                    })
+
+            # Deterministik modda model önerisini yok say ve kapsam motorunu kullan.
+            if deterministic_mode:
+                fallback = assistant.get_fallback_action_for_untested()
+                if fallback:
+                    suggestion = fallback
+                    self.send_sse({
+                        "type": "orchestrator_directive",
+                        "step": step,
+                        "directive": f"🎯 [Kapsam Motoru]: {suggestion.get('thought')}"
+                    })
+                else:
+                    # Kapsam motoru da yeni eylem bulamıyorsa değerlendirme tamam.
+                    print(f"[DIAG] COMPLETE at step {step}: deterministic coverage exhausted all services")
+                    self.send_sse({
+                        "type": "orchestrator_directive",
+                        "step": step,
+                        "directive": "🏁 [Kapsam Motoru]: Tüm kritik servisler test edildi. Değerlendirme tamamlanıyor."
+                    })
+                    break
+
             # ── API/Baglanti hatasi tespiti: sessiz bitisi onle ─────────────
             if not suggestion and getattr(assistant, "_last_llm_error", None):
                 self.send_sse({
@@ -1244,13 +1313,35 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
                     suggestion = None
 
             if not suggestion:
-                self.send_sse({
-                    "type": "error",
-                    "step": step,
-                    "message": "Model öneri üretemedi (JSON parse hatası veya boş yanıt). Değerlendirme durduruldu."
-                })
-                print(f"[DIAG] BREAK at step {step}: suggestion is None (model+orchestrator failed to produce JSON)")
-                break
+                fallback = assistant.get_fallback_action_for_untested()
+                if fallback:
+                    suggestion = fallback
+                    self.send_sse({
+                        "type": "orchestrator_directive",
+                        "step": step,
+                        "directive": f"🎯 [Kapsam Otoritesi]: {suggestion.get('thought')}"
+                    })
+                else:
+                    untested = assistant._untested_services()
+                    if not untested:
+                        print(f"[DIAG] COMPLETE at step {step}: all critical services tested and model completed")
+                        self.send_sse({
+                            "type": "orchestrator_directive",
+                            "step": step,
+                            "directive": "🏁 [Kapsam Otoritesi]: Hedef üzerindeki tüm kritik servisler başarıyla test edildi. Değerlendirme tamamlanıyor."
+                        })
+                        break
+                    else:
+                        self.send_sse({
+                            "type": "error",
+                            "step": step,
+                            "message": "Model öneri üretemedi (JSON parse hatası veya boş yanıt). Değerlendirme durduruldu."
+                        })
+                        print(f"[DIAG] BREAK at step {step}: suggestion is None (model+orchestrator failed to produce JSON)")
+                        break
+
+            if suggestion:
+                suggestion["target"] = target
 
             tool = suggestion.get("tool", "")
             print(f"[DIAG] step {step}: tool={tool} exploit={suggestion.get('exploit')} privesc={suggestion.get('privesc')}")
@@ -1330,9 +1421,19 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
                         suggestion = suggestion2
                         tool = suggestion.get("tool", "")
                     else:
-                        # Ne model ne orchestrator devam edemiyorsa donguyu bitir
-                        print(f"[DIAG] BREAK at step {step}: model said 'done' and neither model nor orchestrator could continue")
-                        break
+                        # Deterministic fallback: test next unassessed service
+                        fallback = assistant.get_fallback_action_for_untested()
+                        if fallback:
+                            suggestion = fallback
+                            tool = suggestion.get("tool", "")
+                            self.send_sse({
+                                "type": "orchestrator_directive",
+                                "step": step,
+                                "directive": f"🎯 [Kapsam Otoritesi]: {suggestion.get('thought')}"
+                            })
+                        else:
+                            print(f"[DIAG] BREAK at step {step}: all critical services tested")
+                            break
                 else:
                     print(f"[DIAG] BREAK at step {step}: model said 'done' and all critical services tested")
                     break
@@ -1356,14 +1457,26 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
                         suggestion = suggestion2
                         tool = suggestion.get("tool", "")
                     else:
-                        self.send_sse({
-                            "type": "error",
-                            "step": step,
-                            "message": "Kurtarma başarısız oldu; bu adım atlanıyor."
-                        })
-                        step -= 1
-                        no_progress_count += 1
-                        continue
+                        # Kurtarma JSON üretemedi: deterministik kapsam otoritesine düş.
+                        fallback = assistant.get_fallback_action_for_untested()
+                        if fallback:
+                            suggestion = fallback
+                            tool = suggestion.get("tool", "")
+                            no_progress_count = 0
+                            self.send_sse({
+                                "type": "orchestrator_directive",
+                                "step": step,
+                                "directive": f"🎯 [Kapsam Otoritesi]: Kurtarma sonrası sıradaki servise geçiliyor: {suggestion.get('thought')}"
+                            })
+                        else:
+                            self.send_sse({
+                                "type": "error",
+                                "step": step,
+                                "message": "Kurtarma başarısız oldu; bu adım atlanıyor."
+                            })
+                            step -= 1
+                            no_progress_count += 1
+                            continue
                 except Exception as e:
                     print(f"[UI] Rescue failed: {e}")
 
@@ -1388,73 +1501,109 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
                     "step": step,
                     "directive": f"🔁 [Sistem] '{tool}' ({_svc or ''}) zaten çalıştırıldı. Farklı bir adım zorlanıyor..."
                 })
-                assistant.conversation.append({
-                    "role": "user",
-                    "content": (
-                        f"LOOP BREAKER: You already ran '{action_key}' and received its output. "
-                        "Do NOT repeat it. You MUST now either (a) run an EXPLOIT for a discovered "
-                        "vulnerable service (tool:exploit, e.g. exploit:vsftpd_backdoor, "
-                        "exploit:samba_usermap, exploit:ingreslock_backdoor), or (b) run a privesc "
-                        "step, or (c) test a DIFFERENT service. Produce a valid JSON NOW."
-                    ),
-                })
-                # Modele zorla yeni oneri urettir
-                forced = None
-                try:
-                    forced = assistant._ask_llm_for_suggestion(context, skip_orchestrator=True)
-                except Exception:
+
+                # ── ÖNCELİK 1: Deterministik kapsam otoritesi ────────────────
+                # Modelin tekrar üretmesini beklemeden, henüz test edilmemiş bir
+                # servis için hazır eylem varsa DOĞRUDAN onu kullan. Bu, modelin
+                # ısrarla aynı eylemi önermesi durumunda bile ilerlemeyi garanti
+                # eder ve no_progress sayacının boşa dolmasını engeller.
+                fallback = assistant.get_fallback_action_for_untested()
+                if fallback:
+                    suggestion = fallback
+                    tool = suggestion.get("tool", "")
+                    no_progress_count = 0
+                    self.send_sse({
+                        "type": "orchestrator_directive",
+                        "step": step,
+                        "directive": f"🎯 [Kapsam Otoritesi]: Tekrarlı eylem engellendi. Sıradaki servise geçiliyor: {suggestion.get('thought')}"
+                    })
+                else:
+                    # ── ÖNCELİK 2: Modelden yeni öneri iste ──────────────────
+                    if assistant.conversation and assistant.conversation[-1].get("content", "").startswith("LOOP BREAKER:"):
+                        assistant.conversation.pop()
+                    assistant.conversation.append({
+                        "role": "user",
+                        "content": (
+                            f"LOOP BREAKER: You already ran '{action_key}' and received its output. "
+                            "Do NOT repeat it. You MUST now either (a) run an EXPLOIT for a discovered "
+                            "vulnerable service (tool:exploit, e.g. exploit:vsftpd_backdoor, "
+                            "exploit:samba_usermap, exploit:ingreslock_backdoor), or (b) run a privesc "
+                            "step, or (c) test a DIFFERENT service. Produce a valid JSON NOW."
+                        ),
+                    })
                     forced = None
+                    try:
+                        forced = assistant._ask_llm_for_suggestion(context, skip_orchestrator=True)
+                    except Exception:
+                        forced = None
 
-                # forced'in action_key'ini hesapla (tekrar edip etmedigini anlamak icin)
-                _f_svc = forced.get("service_name") if forced else None
-                if forced and forced.get("tool") == "exploit":
-                    _f_svc = forced.get("exploit") or _f_svc
-                elif forced and forced.get("tool") == "privesc":
-                    _f_svc = forced.get("privesc") or _f_svc
-                forced_key = assistant._action_key(
-                    forced.get("tool", "") if forced else "", target,
-                    forced.get("ports") if forced else None, _f_svc,
-                    forced.get("version") if forced else None,
-                ) if forced else ""
-
-                # Model hala ayni/gecersiz oneriyi verdiyse VEYA eylem zaten calistirildiysa Orchestrator'dan al
-                if not forced or forced.get("tool") in ("done", None) or forced_key in assistant.visited_actions:
-                    if orchestrator:
-                        try:
-                            forced = orchestrator.direct_json_suggestion(
-                                current_findings=assistant.findings,
-                                step_number=step,
-                                target=target,
-                                visited_actions=assistant.visited_actions,
-                            )
-                        except Exception:
-                            forced = None
-                if forced and forced.get("tool") not in ("done", None):
-                    # forced action key'ini exploit/privesc adini dahil ederek hesapla
-                    _f_svc = forced.get("service_name")
-                    if forced.get("tool") == "exploit":
+                    _f_svc = forced.get("service_name") if forced else None
+                    if forced and forced.get("tool") == "exploit":
                         _f_svc = forced.get("exploit") or _f_svc
-                    elif forced.get("tool") == "privesc":
+                    elif forced and forced.get("tool") == "privesc":
                         _f_svc = forced.get("privesc") or _f_svc
                     forced_key = assistant._action_key(
-                        forced.get("tool", ""), target,
-                        forced.get("ports"), _f_svc, forced.get("version"),
-                    )
-                    if forced_key not in assistant.visited_actions:
-                        suggestion = forced
-                        tool = suggestion.get("tool", "")
+                        forced.get("tool", "") if forced else "", target,
+                        forced.get("ports") if forced else None, _f_svc,
+                        forced.get("version") if forced else None,
+                    ) if forced else ""
+
+                    # Model hala ayni/gecersiz oneriyi verdiyse VEYA eylem zaten calistirildiysa Orchestrator'dan al
+                    if not forced or forced.get("tool") in ("done", None) or forced_key in assistant.visited_actions:
+                        if orchestrator:
+                            try:
+                                forced = orchestrator.direct_json_suggestion(
+                                    current_findings=assistant.findings,
+                                    step_number=step,
+                                    target=target,
+                                    visited_actions=assistant.visited_actions,
+                                )
+                            except Exception:
+                                forced = None
+
+                    if forced and forced.get("tool") not in ("done", None):
+                        _f_svc = forced.get("service_name")
+                        if forced.get("tool") == "exploit":
+                            _f_svc = forced.get("exploit") or _f_svc
+                        elif forced.get("tool") == "privesc":
+                            _f_svc = forced.get("privesc") or _f_svc
+                        forced_key = assistant._action_key(
+                            forced.get("tool", ""), target,
+                            forced.get("ports"), _f_svc, forced.get("version"),
+                        )
+                        if forced_key not in assistant.visited_actions:
+                            suggestion = forced
+                            tool = suggestion.get("tool", "")
+                            no_progress_count = 0
+                        else:
+                            # ── ÖNCELİK 3: Hiçbiri yeni eylem üretemedi ──────
+                            untested = assistant._untested_services()
+                            if not untested:
+                                print(f"[DIAG] COMPLETE at step {step}: all critical services tested and no new actions remain")
+                                self.send_sse({
+                                    "type": "orchestrator_directive",
+                                    "step": step,
+                                    "directive": "🏁 [Kapsam Otoritesi]: Hedef üzerindeki tüm kritik servisler ve zaafiyetler başarıyla test edildi. Değerlendirme tamamlanıyor."
+                                })
+                                break
+                            print(f"[DIAG] CONTINUE at step {step}: loop-breaker could not produce a new action")
+                            step -= 1
+                            no_progress_count += 1
+                            continue
                     else:
-                        # Zorlanan oneri de tekrarliysa bu adimi atla (adim yakma)
-                        print(f"[DIAG] CONTINUE at step {step}: loop-breaker forced action '{forced_key}' also already visited")
+                        untested = assistant._untested_services()
+                        if not untested:
+                            print(f"[DIAG] COMPLETE at step {step}: all critical services tested and no new actions remain")
+                            self.send_sse({
+                                "type": "orchestrator_directive",
+                                "step": step,
+                                "directive": "🏁 [Kapsam Otoritesi]: Hedef üzerindeki tüm kritik servisler ve zaafiyetler başarıyla test edildi. Değerlendirme tamamlanıyor."
+                            })
+                            break
+                        print(f"[DIAG] CONTINUE at step {step}: loop-breaker could not produce a new action")
                         step -= 1
                         no_progress_count += 1
                         continue
-                else:
-                    # Ne model ne orchestrator yeni bir sey uretemiyorsa adimi atla
-                    print(f"[DIAG] CONTINUE at step {step}: loop-breaker could not produce a new action")
-                    step -= 1
-                    no_progress_count += 1
-                    continue
 
             # Send Step Plan to UI
             no_progress_count = 0  # Gercek bir adim isleniyor; sayaci sifirla
@@ -1463,7 +1612,7 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
                 "step": step,
                 "max_steps": max_steps,
                 "tool": tool,
-                "target": suggestion.get("target", target),
+                "target": target,
                 "thought": suggestion.get("thought", ""),
                 "rationale": suggestion.get("rationale", ""),
                 "exploit": suggestion.get("exploit"),
@@ -1476,7 +1625,7 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
                 "step": step,
                 "thought": suggestion.get("thought", ""),
                 "tool": tool,
-                "target": suggestion.get("target", target),
+                "target": target,
                 "ports": suggestion.get("ports"),
                 "service_name": suggestion.get("service_name"),
                 "version": suggestion.get("version"),
@@ -1528,7 +1677,7 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
                     "type": "awaiting_approval",
                     "step": step,
                     "tool": tool,
-                    "target": suggestion.get("target", target),
+                    "target": target,
                     "thought": suggestion.get("thought", ""),
                     "rationale": suggestion.get("rationale", "")
                 })
@@ -1543,7 +1692,7 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
             try:
                 res = assistant.execute_step(
                     tool=tool,
-                    target=suggestion.get("target", target),
+                    target=target,
                     suggestion=suggestion,
                     approved=approved,
                 )

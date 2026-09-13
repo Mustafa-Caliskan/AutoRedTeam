@@ -31,6 +31,23 @@ def sanitize_llm_response(text: Optional[str]) -> Optional[str]:
 
     raw = text.strip()
 
+    # 0. JSON KORUMASI: Eğer yanıt geçerli bir JSON nesnesi ise (veya markdown
+    #    fence içinde JSON varsa) HİÇBİR temizleme uygulama. Aksi halde aşağıdaki
+    #    sezgisel bölme kuralları (✅, [Output], "Final Verification:" vb.) JSON
+    #    gövdesinin içindeki metinlerle çakışıp yapıyı bozabilir. Bu, worker
+    #    modelinin JSON üretip de parse edilememesinin en sık nedenlerinden biriydi.
+    stripped = raw
+    if stripped.startswith("```"):
+        fence = re.match(r"```(?:json)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
+        if fence:
+            stripped = fence.group(1).strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            json.loads(stripped)
+            return raw
+        except (json.JSONDecodeError, ValueError):
+            pass
+
     # 1. XML <think>...</think> etiketlerini sil
     raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
 
@@ -377,6 +394,14 @@ class OpenAICompatibleClient(BaseLLMClient):
                 decoding via SGLang xgrammar or OpenAI structured outputs.
         """
         try:
+            # Context length guard: clamp max_tokens if input + max_tokens exceeds model limit
+            max_limit = getattr(self, "max_model_len", 8192) or 8192
+            est_tokens = sum(len(m.get("content", "")) for m in messages) // 3.5
+            if est_tokens + max_tokens > max_limit:
+                clamped = max(64, int(max_limit - est_tokens - 32))
+                logger.warning(f"[OpenAICompatibleClient] Clamping max_tokens from {max_tokens} to {clamped} (input ~{est_tokens}, limit {max_limit})")
+                max_tokens = clamped
+
             kwargs: Dict[str, Any] = {
                 "model": self.model_name,
                 "messages": messages,
@@ -388,6 +413,11 @@ class OpenAICompatibleClient(BaseLLMClient):
                 kwargs["tool_choice"] = "auto"
 
             # Constrained Decoding / Structured Outputs
+            # SGLang (CyberStrike 35B) OpenAI-uyumlu uç noktası `response_format`
+            # json_schema formatını desteklemez; bunun yerine `guided_json`
+            # (xgrammar) kullanır. vLLM ise `response_format`/`guided_json` ikisini
+            # de kabul eder. Bu yüzden her iki parametreyi de göndeririz; sunucu
+            # desteklemediğini belirtirse aşağıdaki fallback zinciri devreye girer.
             if response_format:
                 kwargs["response_format"] = response_format
             elif json_schema:
@@ -404,8 +434,10 @@ class OpenAICompatibleClient(BaseLLMClient):
             extra_body: Dict[str, Any] = {}
             if enable_thinking is not None:
                 extra_body["enable_thinking"] = enable_thinking
-            if json_schema and "response_format" not in kwargs:
-                extra_body["json_schema"] = json.dumps(json_schema) if isinstance(json_schema, dict) else json_schema
+            if json_schema:
+                # SGLang xgrammar constrained decoding. vLLM de `guided_json`
+                # destekler; desteklemeyen sunucularda fallback ile temizlenir.
+                extra_body["guided_json"] = json_schema
 
             if extra_body:
                 kwargs["extra_body"] = extra_body
@@ -413,13 +445,36 @@ class OpenAICompatibleClient(BaseLLMClient):
             try:
                 completion = self.client.chat.completions.create(**kwargs)
             except Exception as api_err:
-                # If server doesn't support json_schema or response_format, fallback cleanly
                 err_str = str(api_err).lower()
-                if any(k in err_str for k in ["response_format", "json_schema", "extra_body", "unrecognized"]):
-                    logger.warning(f"Server rejected constrained parameters, retrying standard: {api_err}")
-                    kwargs.pop("response_format", None)
-                    kwargs.pop("extra_body", None)
+                # Context limit retry: if server rejects due to context window length
+                if any(k in err_str for k in ["maximum context length", "requested token count exceeds", "context_length_exceeded"]):
+                    logger.warning(f"Context length exceeded ({api_err}), auto-pruning messages and retrying with safe budget.")
+                    pruned = [messages[0]]
+                    for m in messages[-2:]:
+                        m_copy = dict(m)
+                        if len(m_copy.get("content", "")) > 450:
+                            m_copy["content"] = m_copy["content"][:400] + "...[pruned for context]"
+                        pruned.append(m_copy)
+                    kwargs["messages"] = pruned
+                    pruned_est = sum(len(x.get("content", "")) for x in pruned) // 3.5
+                    kwargs["max_tokens"] = max(64, min(256, int(max_limit - pruned_est - 32)))
                     completion = self.client.chat.completions.create(**kwargs)
+                # If server doesn't support constrained decoding, degrade
+                # gracefully in stages: first drop response_format but KEEP
+                # guided_json (SGLang), then drop guided_json too.
+                elif any(k in err_str for k in ["response_format", "json_schema", "guided_json", "extra_body", "unrecognized"]):
+                    logger.warning(f"Server rejected constrained parameters, retrying with guided_json only: {api_err}")
+                    kwargs.pop("response_format", None)
+                    try:
+                        completion = self.client.chat.completions.create(**kwargs)
+                    except Exception as api_err2:
+                        err_str2 = str(api_err2).lower()
+                        if any(k in err_str2 for k in ["guided_json", "extra_body", "unrecognized"]):
+                            logger.warning(f"Server rejected guided_json too, retrying standard: {api_err2}")
+                            kwargs.pop("extra_body", None)
+                            completion = self.client.chat.completions.create(**kwargs)
+                        else:
+                            raise api_err2
                 else:
                     raise api_err
 
@@ -477,12 +532,19 @@ class OpenAICompatibleClient(BaseLLMClient):
             )
 
     def detect_model_name(self) -> str:
-        """vLLM'den yüklü modelin gerçek adını otomatik alır."""
+        """vLLM/SGLang'den yüklü modelin gerçek adını ve max_model_len değerini otomatik alır."""
         try:
             models = self.client.models.list()
             if models.data:
-                detected = models.data[0].id
-                logger.info(f"vLLM model adı otomatik algılandı: {detected}")
+                m = models.data[0]
+                detected = m.id
+                max_len = getattr(m, "max_model_len", None)
+                if max_len:
+                    try:
+                        self.max_model_len = int(max_len)
+                    except (ValueError, TypeError):
+                        pass
+                logger.info(f"vLLM/SGLang model adı otomatik algılandı: {detected} (max_model_len={getattr(self, 'max_model_len', 8192)})")
                 return detected
         except Exception as e:
             logger.warning(f"Model adı otomatik algılanamadı: {e}")

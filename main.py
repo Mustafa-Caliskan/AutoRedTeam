@@ -88,13 +88,26 @@ def run_assessment_assistant(
     llm_client = None
     if llm_provider != "mock":
         cfg = load_config()
-        endpoint = endpoint_url or cfg.victim().get("endpoint_url", "https://api.openai.com/v1")
-        key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        endpoint = (
+            endpoint_url
+            or os.environ.get("COLAB_ATTACKER_URL")
+            or os.environ.get("RUNPOD_ATTACKER_URL")
+            or cfg.victim().get("endpoint_url", "https://api.openai.com/v1")
+        )
+        key = (
+            api_key
+            or os.environ.get("COLAB_API_KEY")
+            or os.environ.get("RUNPOD_API_KEY")
+            or os.environ.get("OPENAI_API_KEY", "")
+        )
+        effective_provider = llm_provider
+        if not endpoint_url and (os.environ.get("COLAB_ATTACKER_URL") or os.environ.get("RUNPOD_ATTACKER_URL")):
+            effective_provider = "runpod"
         # Use the attacker model name (e.g. CyberStrike 35B) for the assessment
         # co-pilot, and auto-detect the actual model served by the endpoint.
         model_name = cfg.attacker().get("name", "huihui-ai/huihui-cyberstrike-offsec-35b-abliterated")
         llm_client = create_llm_client(
-            provider=llm_provider,
+            provider=effective_provider,
             model_name=model_name,
             endpoint_url=endpoint,
             api_key=key,
@@ -410,7 +423,7 @@ Examples:
         endpoint_url=endpoint,
         model_name=model_name,
         api_key=args.api_key,
-        attacker_endpoint=args.attacker_endpoint,
+        attacker_endpoint=args.attacker_endpoint or os.environ.get("COLAB_ATTACKER_URL") or os.environ.get("RUNPOD_ATTACKER_URL") or "",
         export_jsonl=not args.no_export,
         export_report=not args.no_report,
         auto_detect_model=auto_detect

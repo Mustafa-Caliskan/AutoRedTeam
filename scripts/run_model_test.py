@@ -226,8 +226,9 @@ def main():
     # Wrap _dispatch_tool to capture tool outputs
     original_dispatch = assistant._dispatch_tool
 
-    def logging_dispatch(tool, target, param, approved, service_name=None, version=None, ports=None):
-        result = original_dispatch(tool, target, param, approved, service_name=service_name, version=version, ports=ports)
+    def logging_dispatch(*tool_args, **tool_kwargs):
+        result = original_dispatch(*tool_args, **tool_kwargs)
+        tool = tool_kwargs.get("tool") if "tool" in tool_kwargs else (tool_args[0] if len(tool_args) > 0 else "")
         out_record = {
             "session": args.session_name,
             "target": args.target,

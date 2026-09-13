@@ -1,0 +1,248 @@
+# AutoRedTeam — Proje Kapsamı, Mevcut Durum ve Yol Haritası
+
+> **Son Güncelleme:** 2026-09-13
+> **Sürüm:** v2.3 (Deterministik Kapsam Motoru + Genişletilmiş Exploit Kataloğu)
+> **Durum:** Aktif geliştirme — Faz 1 (Altyapı Pentest) çalışıyor, kapsam derinliği artırılıyor
+
+---
+
+## 1. Projenin Ana Amacı
+
+AutoRedTeam, **iki fazlı** otonom bir güvenlik değerlendirme platformudur:
+
+### Faz 1 — Altyapı & Web Pentest (ŞU ANKİ ODAK)
+Gerçek sistemleri (ağ servisleri, web uygulamaları, API'ler) otonom olarak pentest edip
+**tüm zafiyetleri tespit eden, doğrulayan ve raporlayan** bir sistem kurmak.
+
+- Hedefler: Metasploitable2, OWASP Juice Shop (yerel Docker laboratuvarları)
+- Yetenekler: Port tarama → servis keşfi → zafiyet lookup → aktif istismar → yetki yükseltme → rapor
+- Çıktı: Kanıtlanmış (evidence-based) bulgular + exploit zincirleri + PDF/Markdown rapor
+
+### Faz 2 — LLM / AI Ajan Pentest (GELECEK)
+Aynı otonom değerlendirme yeteneğini **LLM tabanlı ajanlara** uygulamak.
+
+- Hedefler: Kurumsal AI ajanları (function-calling, RAG, araç erişimli)
+- Tehditler: Dolaylı prompt injection, yetki aşımı (excessive agency), veri sızdırma, jailbreak
+- Standartlar: OWASP LLM Top 10, MITRE ATLAS
+- Mevcut altyapı: `core/attacker.py`, `core/victim_agent.py`, `core/evaluator.py`, `core/llm_redteam_engine.py`
+
+---
+
+## 2. Mimari Genel Bakış
+
+### 3 Katmanlı Model Orkestrasyonu
+
+```
++-------------------------------------------------------------------+
+|  TIER 3: SUPREME ARBITER & ESCALATION ORACLE                      |
+|  Anthropic Claude (LLM-as-a-Judge, invariant denetimi, kriz çözücü)|
++-------------------------------------------------------------------+
+                              |
+              Kriz eskalasyonu / hakem kararları
+                              v
++-------------------------------------------------------------------+
+|  TIER 2: STRATEGIC ORCHESTRATOR (PARENT BRAIN)                    |
+|  DeepSeek V4 Flash (stratejik planlama, web CVE istihbaratı)      |
++-------------------------------------------------------------------+
+                              |
+              Taktik direktifler & kompakt bağlam
+                              v
++-------------------------------------------------------------------+
+|  TIER 1: TACTICAL EXECUTION ENGINE (WORKER)                       |
+|  CyberStrike 35B Abliterated (SGLang, containerize araçlar)       |
++-------------------------------------------------------------------+
+```
+
+### Çift Motor
+
+| Motor | Amaç | Durum |
+|---|---|---|
+| **Motor 1: Adversarial AI Red Team** | LLM ajanlarına prompt injection, jailbreak, veri sızdırma | Faz 2 — altyapı hazır |
+| **Motor 2: Altyapı & Web Pentest** | Gerçek sistemlere otonom sızma + privesc | **Faz 1 — aktif geliştirme** |
+
+### Yeni Nesil Modüller (v2.2+)
+
+| Modül | Dosya | Görev |
+|---|---|---|
+| Hierarchical Context Engine | `core/context_engine.py` | L0/L1/L2 bağlam sıkıştırma, %70-90 token tasarrufu |
+| Autonomous Target Memory | `core/target_memory.py` | Oturumlar arası hedef hafızası, recon skip |
+| Autonomous Browser Agent | `core/browser_tool.py` | Playwright/HTTP fallback DOM pentest + screenshot |
+| Evaluation Arbiter | `core/evaluation_arbiter.py` | LLM-as-a-Judge, OWASP LLM Top 10 invariant denetimi |
+
+---
+
+## 3. Mevcut Durum (v2.3)
+
+### Çalışan Bileşenler
+
+- **Web Kokpiti** (`assessment_ui.py`): Gerçek zamanlı SSE akışı, canlı bulgu/exploit zinciri görselleştirme
+- **CLI** (`main.py`): `--mode assessment` ile human-in-the-loop değerlendirme
+- **Exploit Runner** (`core/exploit_runner.py`): 12 kayıtlı exploit
+- **Privesc Engine** (`core/privesc_engine.py`): SUID, sudoers, GTFOBins, verify_root
+- **Validation Gate** (`core/validation_gate.py`): 7-soru anti-hallucination filtresi
+- **Docker Laboratuvarı**: Metasploitable2 + Juice Shop + assessment-tools (nmap, nikto, gobuster, sqlmap, searchsploit, testssl)
+
+### Test Durumu
+
+```
+165 passed in ~48s
+```
+
+### Exploit Kataloğu (12)
+
+| Exploit | Servis/Port | Durum |
+|---|---|---|
+| `ingreslock_backdoor` | 1524 | ✅ Çalışıyor (root shell) |
+| `ssh_credential_spray` | 22 | ✅ Çalışıyor (msfadmin:msfadmin) |
+| `vsftpd_backdoor` | 21 | ⚠️ Hedefte port 6200 kapalı |
+| `samba_usermap` | 445 | ⚠️ Enjeksiyon gönderiliyor, doğrulama zayıf |
+| `distcc_exec` | 3632 | ⚠️ Bağlanıyor, komut çalışmıyor |
+| `unrealircd_backdoor` | 6667 | ⚠️ Banner alınıyor, shell yok |
+| `proftpd_modcopy` | 2121 | ⚠️ mod_copy desteklenmiyor (1.3.1) |
+| `java_rmi_deserialize` | 1099 | ⚠️ Protokol farklı yanıt veriyor |
+| `ruby_drb_rce` | 8787 | ⚠️ Servis doğrulandı, RCE payload çalışmadı |
+| `vnc_null_auth` | 5900 | ⚠️ Port kapalı |
+| `tomcat_manager_deploy` | 8180 | ⚠️ Port kapalı |
+| `juice_shop_admin` | 3000 | ✅ Çalışıyor (Juice Shop) |
+
+---
+
+## 4. Son Test Sonuçları ve Analiz
+
+### Test 1 (v2.2, 16 adım) — Erken bitme
+- **Sorun:** Model JSON üretemedi, DeepSeek sürekli devreye girdi, 16 adımda bitti.
+- **Kök neden:** SGLang `response_format` desteklemiyordu → constrained decoding kapalıydı.
+
+### Test 2 (v2.3, 26 adım) — Model takılması
+- **Sorun:** Model 26 adım boyunca `vsftpd_backdoor`/`ssh_credential_spray` önerdi.
+- **Kök neden:** CyberStrike 35B uzun bağlamda instruction-following zayıflığı.
+
+### Test 3 (v2.3, 25 adım) — Deterministik mod çalıştı
+- **İyi haber:** Model 3 adımda takıldı → sistem otomatik deterministik kapsam motoruna geçti → tüm 23 servis sırayla test edildi.
+- **Sonuç:** 6 bulgu (2 gerçek kritik: SSH zayıf kimlik, ingreslock root shell).
+- **Kalan sorun:** Exploit'lerin çoğu hedefte başarısız; web uygulamaları (DVWA, Mutillidae, phpMyAdmin, TikiWiki, WebDAV) hiç test edilmedi.
+
+### Tespit Edilen Kök Sorunlar
+
+| # | Sorun | Durum |
+|---|---|---|
+| 1 | `no_progress_count` çok agresif erken bitiriyordu | ✅ Düzeltildi (eşik 5→12, deterministik fallback önceliği) |
+| 2 | SGLang constrained decoding çalışmıyordu | ✅ Düzeltildi (`guided_json` + kademeli fallback) |
+| 3 | `sanitize_llm_response` JSON'u bozuyordu | ✅ Düzeltildi (JSON koruması) |
+| 4 | `_CRITICAL_SERVICES` eksikti (13 servis) | ✅ Genişletildi (23 servis) |
+| 5 | Eksik exploit scriptleri | ✅ 5 yeni script eklendi |
+| 6 | searchsploit lookup'ları bulgu sayılıyordu | ✅ Düzeltildi (istihbarat filtresi) |
+| 7 | Model takılması | ✅ Deterministik kapsam motoru eklendi |
+| 8 | Yanlış pozitif exploit başarısı (distcc/unrealircd) | ✅ Düzeltildi (sadece `uid=` kanıtı) |
+| 9 | **Web uygulamaları test edilmiyor** | ❌ Açık — çözüm önerisi aşağıda |
+| 10 | **MySQL/PostgreSQL exploit yok** | ❌ Açık |
+| 11 | **Claude model adı geçersiz** (`claude-5-sonnet` 404) | ❌ Açık |
+| 12 | **Exploit başarı oranı düşük** | ❌ Açık |
+
+---
+
+## 5. Çözüm Önerileri (Öncelik Sırasıyla)
+
+### Yüksek Öncelik
+
+1. **Web uygulaması zafiyet taraması ekle**
+   - `_CRITICAL_SERVICES`'e web dizinlerini ekle: `/dvwa/`, `/mutillidae/`, `/phpMyAdmin/`, `/tikiwiki/`, `/twiki/`, `/dav/`
+   - Her dizin için özel kontroller: SQLi (DVWA), XSS, dosya yükleme, WebDAV PUT, phpMyAdmin default creds
+   - `sqlmap` ve `gobuster` entegrasyonunu web dizinlerine yönlendir
+
+2. **MySQL/PostgreSQL istismarı ekle**
+   - MySQL: `CVE-2012-2122` (auth bypass), UDF privesc
+   - PostgreSQL: `CVE-2007-3280` veya zayıf kimlik denemesi
+   - En azından default credential denemesi (`root:root`, `msfadmin:msfadmin`)
+
+3. **Claude model adını düzelt**
+   - `.env`'de `ANTHROPIC_MODEL` gerçek bir model adına ayarla (ör. `claude-3-5-sonnet-latest`)
+   - Geçersizse Tier-3'ü sessizce devre dışı bırak (zaten yapılıyor)
+
+### Orta Öncelik
+
+4. **Exploit başarı oranını artır**
+   - `samba_usermap`: gerçek SMB handshake + komut çıktısı doğrulaması
+   - `distcc_exec`: doğru CVE-2004-2687 payload formatı
+   - `unrealircd_backdoor`: doğru backdoor tetikleme dizisi
+   - `ruby_drb_rce`: geçerli Ruby marshal gadget zinciri
+
+5. **Model takılmasını azalt**
+   - Sistem promptunu kısalt (şu an ~3000 karakter)
+   - Modeli daha küçük, odaklı görevlere böl (her adımda tek karar)
+   - Few-shot örnekler ekle
+
+6. **Bulgu kalitesini artır**
+   - Exploit başarısızlıklarını da "denendi, başarısız" olarak raporla
+   - Zafiyet yüzeyi tespitlerini (Java RMI, VNC) ayrı severity ile kaydet
+
+### Düşük Öncelik
+
+7. **Faz 2 hazırlığı**
+   - LLM ajan pentest motorunu (`core/attacker.py`) Faz 1 ile birleştir
+   - OWASP LLM Top 10 otomatik değerlendirme akışı
+
+---
+
+## 6. Dosya ve Mimari Haritası
+
+```
+llm_redteam/
+├── assessment_ui.py          # Web kokpiti (SSE, canlı izleme)
+├── main.py                   # CLI giriş noktası
+├── arena_ui.py               # LLM Duel Arena (Faz 2)
+├── chat_ui.py                # Sohbet arayüzü
+├── core/
+│   ├── assessment_assistant.py   # Ana değerlendirme döngüsü (worker)
+│   ├── assessment_tools.py       # Araç sarmalayıcıları (nmap, nikto, ...)
+│   ├── exploit_runner.py         # 12 exploit runner
+│   ├── privesc_engine.py         # Yetki yükseltme
+│   ├── orchestrator.py           # Tier-2/3 orkestrasyon
+│   ├── llm_client.py             # LLM istemcileri (OpenAI/SGLang/Anthropic)
+│   ├── context_engine.py         # L0/L1/L2 bağlam motoru
+│   ├── target_memory.py          # Oturumlar arası hafıza
+│   ├── browser_tool.py           # Otonom tarayıcı
+│   ├── validation_gate.py        # Anti-hallucination filtresi
+│   ├── scope.py                  # Kapsam doğrulama (DRY)
+│   ├── attacker.py               # Faz 2: saldırgan LLM
+│   ├── victim_agent.py           # Faz 2: kurban ajan
+│   └── evaluator.py              # Faz 2: değerlendirici
+├── scripts/exploits/         # Bağımsız exploit betikleri
+├── docker/                   # Laboratuvar ortamı
+├── tests/                    # 165 test
+├── config/                   # Yapılandırma + izinli hedefler
+└── docs/                     # Mimari dokümantasyon
+```
+
+---
+
+## 7. Güvenlik ve Etik Notlar
+
+- **Yalnızca yetkili test ortamları:** Tüm hedefler `config/allowed_targets.txt` ile kısıtlıdır.
+- **Kapsam doğrulaması:** `core/scope.py` her eylemden önce hedefi doğrular.
+- **Denetim logu:** Tüm exploit denemeleri `data/assessment_audit_log.jsonl`'a yazılır.
+- **Sır yönetimi:** `.env` git'e dahil edilmez; yalnızca `.env.example` paylaşılır.
+- **Eğitim amaçlı:** Metasploitable2 ve Juice Shop kasıtlı olarak zafiyetli eğitim hedefleridir.
+
+---
+
+## 8. Hızlı Başlangıç
+
+```bash
+# Test paketi
+python -m pytest tests/ -q
+
+# Web kokpiti
+python assessment_ui.py
+# → http://127.0.0.1:7870
+
+# CLI değerlendirme
+python main.py --mode assessment --assessment-target metasploitable2
+
+# Docker laboratuvarı
+docker compose -f docker/docker-compose.yml up -d
+```
+
+---
+
+*Bu doküman projenin canlı durumunu yansıtır. Her büyük geliştirme turunda güncellenmelidir.*

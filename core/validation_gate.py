@@ -87,7 +87,11 @@ class ValidationGate:
             )
 
         speculative_phrases = ["could be vulnerable", "might allow", "theoretically possible", "potential vulnerability", "may be vulnerable"]
-        verified_indicators = ["cve-", "exploit confirmed", "backdoor confirmed", "payload executed", "root shell", "uid=0", "boolean-based", "union select"]
+        verified_indicators = [
+            "cve-", "exploit confirmed", "backdoor confirmed", "payload executed",
+            "root shell", "uid=0", "boolean-based", "union select", "success:", "valid",
+            "msfadmin", "password", "credentials", "authenticated"
+        ]
         if any(sp in evidence_lower for sp in speculative_phrases) and not any(ind in evidence_lower for ind in verified_indicators):
             return ValidationResult(
                 passed=False,

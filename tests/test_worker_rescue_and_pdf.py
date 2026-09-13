@@ -76,34 +76,54 @@ class TestUntestedServices:
     def test_some_tested(self):
         a = AssessmentAssistant(target="metasploitable2")
         a.decision_chain = [
-            {"step": 1, "tool": "nmap", "service_name": "vsftpd", "thought": "vsftpd 2.3.4 bulundu"},
+            {"step": 1, "tool": "exploit", "exploit": "vsftpd_backdoor", "thought": "vsftpd 2.3.4 bulundu"},
             {"step": 2, "tool": "exploit", "exploit": "ssh_credential_spray", "thought": "SSH msfadmin"},
             {"step": 3, "tool": "exploit", "exploit": "samba_usermap", "thought": "Samba 445"},
         ]
         untested = a._untested_services()
-        # Test edilenler listede olmamali
+        # Exploit denenen servisler listede olmamali
         assert not any("vsftpd" in u for u in untested)
         assert not any("ssh" in u.lower() for u in untested)
         assert not any("samba" in u.lower() for u in untested)
         # Test edilmeyenler olmali
         assert any("mysql" in u.lower() for u in untested)
 
+    def test_lookup_only_not_counted_as_tested(self):
+        """searchsploit/cve_search lookup'i exploit gerektiren servisi 'test edildi' SAYMAMALI."""
+        a = AssessmentAssistant(target="metasploitable2")
+        a.decision_chain = [
+            # Sadece lookup yapildi, gercek exploit denemesi YOK
+            {"step": 1, "tool": "searchsploit", "service_name": "vsftpd", "thought": "vsftpd 2.3.4"},
+            {"step": 2, "tool": "searchsploit", "service_name": "distcc", "thought": "distcc 3632"},
+        ]
+        untested = a._untested_services()
+        # Exploit'i olan servisler hala test edilmemis sayilmali
+        assert any("vsftpd" in u for u in untested)
+        assert any("distcc" in u for u in untested)
+
     def test_all_tested(self):
         a = AssessmentAssistant(target="metasploitable2")
         a.decision_chain = [
-            {"step": 1, "tool": "nmap", "service_name": "vsftpd", "thought": "vsftpd ftp 21"},
+            {"step": 1, "tool": "exploit", "exploit": "vsftpd_backdoor", "thought": "vsftpd ftp 21"},
             {"step": 2, "tool": "exploit", "exploit": "ssh_credential_spray", "thought": "ssh 22 msfadmin"},
             {"step": 3, "tool": "exploit", "exploit": "samba_usermap", "thought": "samba smb 445"},
             {"step": 4, "tool": "exploit", "exploit": "ingreslock_backdoor", "thought": "ingreslock 1524"},
             {"step": 5, "tool": "searchsploit", "service_name": "mysql", "thought": "mysql 3306"},
             {"step": 6, "tool": "searchsploit", "service_name": "postgresql", "thought": "postgres 5432"},
-            {"step": 7, "tool": "searchsploit", "service_name": "unrealircd", "thought": "unrealircd 6667"},
+            {"step": 7, "tool": "exploit", "exploit": "unrealircd_backdoor", "thought": "unrealircd 6667"},
             {"step": 8, "tool": "nikto", "service_name": "apache", "thought": "apache http 80 web"},
-            {"step": 9, "tool": "searchsploit", "service_name": "distcc", "thought": "distcc 3632"},
+            {"step": 9, "tool": "exploit", "exploit": "distcc_exec", "thought": "distcc 3632"},
             {"step": 10, "tool": "searchsploit", "service_name": "telnet", "thought": "telnet 23"},
             {"step": 11, "tool": "searchsploit", "service_name": "nfs", "thought": "nfs 2049"},
-            {"step": 12, "tool": "searchsploit", "service_name": "vnc", "thought": "vnc 5900"},
-            {"step": 13, "tool": "searchsploit", "service_name": "java-rmi", "thought": "rmi 1099"},
+            {"step": 12, "tool": "exploit", "exploit": "vnc_null_auth", "thought": "vnc 5900"},
+            {"step": 13, "tool": "exploit", "exploit": "java_rmi_deserialize", "thought": "rmi 1099"},
+            {"step": 14, "tool": "searchsploit", "service_name": "postfix", "thought": "smtp 25"},
+            {"step": 15, "tool": "nmap", "service_name": "rpcbind", "thought": "rpcbind 111"},
+            {"step": 16, "tool": "searchsploit", "service_name": "rsh", "thought": "rexec 512 rsh 514"},
+            {"step": 17, "tool": "searchsploit", "service_name": "rlogin", "thought": "rlogin 513"},
+            {"step": 18, "tool": "exploit", "exploit": "proftpd_modcopy", "thought": "proftpd 2121"},
+            {"step": 19, "tool": "exploit", "exploit": "tomcat_manager_deploy", "thought": "tomcat 8180"},
+            {"step": 20, "tool": "exploit", "exploit": "ruby_drb_rce", "thought": "ruby drb 8787"},
         ]
         untested = a._untested_services()
         assert len(untested) == 0
@@ -164,11 +184,25 @@ class TestAutoSelectExploit:
         assert a._auto_select_exploit("localhost:3000") == "juice_shop_admin"
 
     def test_ingreslock_fallback_when_all_failed(self):
-        # Tüm exploit'ler başarısız olsa bile ingreslock son çare olarak seçilir.
+        # Tüm exploit'ler başarısız olsa bile son çare olarak bir exploit seçilir.
         a = AssessmentAssistant(target="metasploitable2")
-        a._failed_exploits = {"ingreslock_backdoor", "ssh_credential_spray", "vsftpd_backdoor", "samba_usermap"}
+        a._failed_exploits = {
+            "ingreslock_backdoor", "ssh_credential_spray", "vsftpd_backdoor",
+            "samba_usermap", "distcc_exec", "unrealircd_backdoor",
+            "proftpd_modcopy", "java_rmi_deserialize", "ruby_drb_rce",
+            "vnc_null_auth", "tomcat_manager_deploy",
+        }
         result = a._auto_select_exploit("metasploitable2")
         assert result == "ingreslock_backdoor"  # son çare
+
+    def test_new_exploits_selected_by_port(self):
+        # Yeni eklenen exploit'ler port/servis eslesmesiyle secilebilmeli.
+        a = AssessmentAssistant(target="metasploitable2")
+        assert a._auto_select_exploit("metasploitable2", ports="2121") == "proftpd_modcopy"
+        assert a._auto_select_exploit("metasploitable2", ports="1099") == "java_rmi_deserialize"
+        assert a._auto_select_exploit("metasploitable2", ports="8787") == "ruby_drb_rce"
+        assert a._auto_select_exploit("metasploitable2", ports="5900") == "vnc_null_auth"
+        assert a._auto_select_exploit("metasploitable2", ports="8180") == "tomcat_manager_deploy"
 
 
 
@@ -326,3 +360,37 @@ class TestIntelligenceVsFinding:
         fid = a._record_model_finding(finding, current_tool="nmap")
         assert fid is not None
         assert fid.startswith("FIND-")
+
+    def test_auto_extract_skips_searchsploit_output(self, tmp_path):
+        """searchsploit ciktisindaki exploit basliklari bulgu olarak cikarilmamali."""
+        findings_file = tmp_path / "f.jsonl"
+        a = AssessmentAssistant(
+            target="metasploitable2", findings_file=findings_file,
+            auto_approve_findings=True,
+        )
+        # searchsploit 'vnc' aramasi RealVNC basliklari dondurur; hedefte VNC
+        # acik olmasa bile eski kod bunu 'Known vulnerable service version'
+        # olarak kaydediyordu. Artik kaydedilmemeli.
+        searchsploit_output = (
+            "---------------------------------------------- ---------------------------------\n"
+            " Exploit Title                                |  Path\n"
+            "---------------------------------------------- ---------------------------------\n"
+            "RealVNC - Authentication Bypass (Metasploit)  | windows/remote/17719.rb\n"
+            "RealVNC 4.1.0/4.1.1 - Authentication Bypass   | windows/remote/36932.py\n"
+            "---------------------------------------------- ---------------------------------\n"
+            "Shellcodes: No Results\n"
+        )
+        a._auto_extract_finding("searchsploit", searchsploit_output)
+        assert len(a.findings) == 0
+
+    def test_auto_extract_still_works_for_nmap(self, tmp_path):
+        """nmap ciktisindaki gercek zafiyetli versiyon bulgu olarak cikarilmali."""
+        findings_file = tmp_path / "f.jsonl"
+        a = AssessmentAssistant(
+            target="metasploitable2", findings_file=findings_file,
+            auto_approve_findings=True,
+        )
+        nmap_output = "21/tcp open ftp vsftpd 2.3.4\n22/tcp open ssh OpenSSH 4.7p1"
+        a._auto_extract_finding("nmap", nmap_output)
+        assert len(a.findings) >= 1
+        assert any("vsftpd" in f.get("evidence_snippet", "").lower() for f in a.findings)

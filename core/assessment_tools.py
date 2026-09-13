@@ -155,11 +155,12 @@ def _run_command(command: str) -> str:
             # Fallback: run directly on the host (tools may not be installed)
             args = shlex.split(command)
 
+        timeout_sec = int(os.getenv("TOOL_TIMEOUT_SECONDS", "600"))
         result = subprocess.run(
             args,
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=timeout_sec,
             shell=False
         )
         combined = (result.stdout or "") + (result.stderr or "")
@@ -167,7 +168,7 @@ def _run_command(command: str) -> str:
     except FileNotFoundError as e:
         return f"[TOOL NOT INSTALLED / DOCKER NOT AVAILABLE]: {e}"
     except subprocess.TimeoutExpired:
-        return "[TIMEOUT]: Command exceeded 180s and was terminated."
+        return f"[TIMEOUT]: Command exceeded {timeout_sec}s and was terminated."
     except Exception as e:
         return f"[ERROR]: {e}"
 
@@ -240,13 +241,22 @@ def suggest_nikto_scan(target_url: str, approved: bool = False) -> Dict[str, Any
         return _reject_out_of_scope(target_url, "nikto")
 
     exec_url = _resolve_url(target_url)
-    command = f"nikto -h {exec_url} -nointeractive -maxtime 60"
+    maxtime = os.getenv("NIKTO_MAXTIME", "300")
+    if maxtime and str(maxtime).lower() not in ("0", "none", "unlimited"):
+        command = f"nikto -h {exec_url} -nointeractive -maxtime {maxtime}"
+        timeout_note = f"\n\nℹ️ [BİLGİ]: Nikto için tanımlanan {maxtime} saniyelik güvenlik zaman sınırı tamamlandı. Bu süre zarfında tespit edilen tüm HTTP bulguları yukarıda listelendi."
+    else:
+        command = f"nikto -h {exec_url} -nointeractive"
+        timeout_note = ""
+
     rationale = (
         "Web sunucu konfigürasyon zafiyeti taraması: bilinen güvenlik "
         "açıklarını, hatalı yapılandırmaları ve tehlikeli dosyaları tespit "
         "eder. Pasif bir tarayıcıdır, agresif payload göndermez."
     )
     output = _run_command(command) if approved else ""
+    if timeout_note and "maximum execution time" in output.lower():
+        output += timeout_note
     return _build_recommendation(
         tool="nikto", target=target_url, command=command,
         rationale=rationale, approved=approved, output=output
@@ -405,6 +415,38 @@ def suggest_web_search(query: str, approved: bool = False) -> Dict[str, Any]:
     }
 
 
+def suggest_browser_action(
+    target: str,
+    action: str = "navigate",
+    selector: Optional[str] = None,
+    value: Optional[str] = None,
+    approved: bool = False
+) -> Dict[str, Any]:
+    """
+    Juice Shop veya web hedefleri için otonom tarayıcı ve DOM eylemi önerir/çalıştırır.
+    """
+    if not is_target_allowed(target):
+        return _reject_out_of_scope(target, "browser_action")
+
+    from core.browser_tool import execute_browser_action
+
+    cmd = f"browser {action} {target}" + (f" --selector '{selector}'" if selector else "") + (f" --value '{value}'" if value else "")
+    rationale = f"Otonom DOM/SPA tarayıcı eylemi ({action}) ile web zafiyet ve belirteç analizi."
+
+    if approved:
+        res = execute_browser_action(target=target, action=action, selector=selector, value=value)
+        output = json.dumps(res, indent=2, ensure_ascii=False) if isinstance(res, dict) else str(res)
+        return _build_recommendation("browser_action", target, cmd, rationale, approved=True, output=output)
+
+    return {
+        "status": "AWAITING_APPROVAL",
+        "tool": "browser_action",
+        "target": target,
+        "command": cmd,
+        "rationale": rationale
+    }
+
+
 # ── Tool Registry ────────────────────────────────────────────────────────────
 
 ASSESSMENT_TOOLS: Dict[str, Dict[str, Any]] = {
@@ -461,5 +503,11 @@ ASSESSMENT_TOOLS: Dict[str, Dict[str, Any]] = {
         "description": "Canlı web araması (DuckDuckGo CVE/exploit PoC istihbaratı)",
         "function": suggest_web_search,
         "params": ["query"]
+    },
+    "browser_action": {
+        "name": "browser_action",
+        "description": "Otonom DOM/SPA tarayıcı analizi (navigate, interact, extract_storage, screenshot)",
+        "function": suggest_browser_action,
+        "params": ["target", "action", "selector", "value"]
     },
 }

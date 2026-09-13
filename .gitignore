@@ -36,9 +36,13 @@ data/corporate.db
 data/*.db
 data/assessment_findings.jsonl
 data/assessment_audit_log.jsonl
+data/benchmark_results.jsonl
 data/session_logs/
+data/vfs/
 reports/assessment_report.md
 reports/model_capability_test_report.md
+reports/security_audit_report.md
+reports/screenshots/*.png
 raporlar/
 *.pdf
 

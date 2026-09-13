@@ -48,11 +48,14 @@ from core.assessment_tools import (
     suggest_searchsploit_lookup,
     suggest_cve_search,
     suggest_web_search,
+    suggest_browser_action,
 )
 from core.llm_client import BaseLLMClient
 from core.validation_gate import validation_gate
 from core.chain_engine import chain_engine
 from core.skill_loader import skill_loader
+from core.context_engine import context_engine
+from core.target_memory import target_memory
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +108,7 @@ JSON Schema:
   "service_name": "service daemon if tool is searchsploit/cve_search (e.g. 'vsftpd', 'apache', 'samba'), else null",
   "version": "service version if tool is searchsploit/cve_search (e.g. '2.3.4', '2.2.8', '3.0.20'), else null",
   "query": "exact DuckDuckGo search query if tool is web_search (e.g. 'vsftpd 2.3.4 CVE exploit PoC'), else null",
-  "exploit": "if tool is 'exploit', one of: vsftpd_backdoor, samba_usermap, ingreslock_backdoor, ssh_credential_spray, juice_shop_admin; else null",
+  "exploit": "if tool is 'exploit', one of: vsftpd_backdoor, samba_usermap, ingreslock_backdoor, ssh_credential_spray, distcc_exec, unrealircd_backdoor, juice_shop_admin; else null",
   "privesc": "if tool is 'privesc', one of: suid_enumeration, sudoers_audit, sudo_privesc, gtfobins_privesc, verify_root; else null",
   "username": "SSH username if privesc requires a foothold session (e.g. 'msfadmin'), else null",
   "password": "SSH password if privesc requires a foothold session (e.g. 'msfadmin'), else null",
@@ -129,7 +132,7 @@ JSON Schema:
    - IMPORTANT: If cve_search/searchsploit reveals an exploitable service (e.g. vsftpd 2.3.4, Samba 3.0.20, port 1524 ingreslock), your VERY NEXT action MUST be {"tool":"exploit","exploit":"<exploit_name>",...}. Do NOT search again. Do NOT emit a finding yet. Exploit first, THEN record the finding with uid=0 as evidence.
 
 3. ACTIVE EXPLOITATION (REAL RED TEAM):
-   - When a verified vulnerable service is found (e.g. vsftpd 2.3.4, Samba 3.0.20, port 1524 backdoor), DO NOT stop at reporting. Set "tool": "exploit" AND ALWAYS set the "exploit" field to the exact exploit name (e.g. "ingreslock_backdoor", "vsftpd_backdoor", "ssh_credential_spray", "samba_usermap", "juice_shop_admin").
+   - When a verified vulnerable service is found (e.g. vsftpd 2.3.4, Samba 3.0.20, port 1524 backdoor), DO NOT stop at reporting. Set "tool": "exploit" AND ALWAYS set the "exploit" field to the exact exploit name (e.g. "ingreslock_backdoor", "vsftpd_backdoor", "ssh_credential_spray", "samba_usermap", "distcc_exec", "unrealircd_backdoor", "juice_shop_admin").
    - CRITICAL: When "tool" is "exploit", the "exploit" field MUST be a non-null string. NEVER leave it null. Choose the exploit that matches the discovered service.
    - CRITICAL: The "target" field MUST always be the active target alias ("metasploitable2" or "localhost:3000"). NEVER put a port number or IP in "target".
    - After a foothold (e.g. SSH as msfadmin), set "tool": "privesc" AND ALWAYS set the "privesc" field (e.g. "suid_enumeration", "sudoers_audit", "sudo_privesc", "gtfobins_privesc", "verify_root"). Provide "username" and "password" for the foothold session (e.g. "msfadmin"/"msfadmin").
@@ -142,11 +145,12 @@ JSON Schema:
    - Port 22: SSH zayif kimlik -> "exploit":"ssh_credential_spray" (HAZIR)
    - Port 445: Samba 3.0.20 -> "exploit":"samba_usermap" (HAZIR)
    - Port 1524: Ingreslock backdoor -> "exploit":"ingreslock_backdoor" (HAZIR)
-   - Port 3306: MySQL 5.0 -> HAZIR EXPLOIT YOK. searchsploit/cve_search ile dogrula, finding kaydet, BASKA SERVISE GEC.
-   - Port 5432: PostgreSQL -> HAZIR EXPLOIT YOK. searchsploit/cve_search ile dogrula, finding kaydet, BASKA SERVISE GEC.
-   - Port 6667: UnrealIRCd -> HAZIR EXPLOIT YOK. searchsploit ile dogrula, finding kaydet, BASKA SERVISE GEC.
-   - Port 80: Apache/PHP -> nikto/gobuster ile web zafiyetlerini tara.
-3. BIR EXPLOIT BASARISIZ OLURSA (ornegin vsftpd port 6200 acilmadi) veya bir servis icin HAZIR EXPLOIT YOKSA, O SERVISE TAKILIP KALMA. Ayni servisi 2'den fazla kez DENEME. Hemen diger servise gec.
+   - Port 3632: distcc CVE-2004-2687 -> "exploit":"distcc_exec" (HAZIR)
+   - Port 6667: UnrealIRCd CVE-2010-2075 -> "exploit":"unrealircd_backdoor" (HAZIR)
+   - Port 3306: MySQL 5.0 -> searchsploit/cve_search ile dogrula, finding kaydet, BASKA SERVISE GEC.
+   - Port 5432: PostgreSQL -> searchsploit/cve_search ile dogrula, finding kaydet, BASKA SERVISE GEC.
+   - Port 80: Apache/PHP -> nikto/gobuster ile web dizinlerini (/dvwa/, /mutillidae/, /phpMyAdmin/) tara.
+3. BIR EXPLOIT BASARISIZ OLURSA (ornegin vsftpd port 6200 acilmadi), O SERVISE TAKILIP KALMA. Ayni servisi 2'den fazla kez DENEME. Hemen diger servise gec.
 4. Her basarili exploit/privesc icin bir "finding" kaydet (evidence ile). Boylece tum zafiyetler rapora girer.
 5. "done" KARARI ICIN KATI KOSULLAR: "tool":"done" demeden ONCE su servislerin HEPSI test edilmis olmalidir:
    vsftpd(21), SSH(22), Samba(445), ingreslock(1524), MySQL(3306), PostgreSQL(5432), UnrealIRCd(6667), Apache/PHP(80), distcc(3632).
@@ -165,7 +169,7 @@ ASSESSMENT_JSON_SCHEMA: Dict[str, Any] = {
             "enum": [
                 "nmap", "gobuster", "nikto", "whatweb", "ssl_check",
                 "sqlmap", "searchsploit", "cve_search", "web_search",
-                "debugger", "exploit", "privesc", "done"
+                "debugger", "exploit", "privesc", "browser_action", "done"
             ]
         },
         "target": {"type": "string"},
@@ -174,12 +178,17 @@ ASSESSMENT_JSON_SCHEMA: Dict[str, Any] = {
         "service_name": {"type": ["string", "null"]},
         "version": {"type": ["string", "null"]},
         "query": {"type": ["string", "null"]},
+        # Browser / DOM interaction fields
+        "action": {"type": ["string", "null"]},
+        "selector": {"type": ["string", "null"]},
+        "value": {"type": ["string", "null"]},
         # Active exploitation fields
         "exploit": {
             "type": ["string", "null"],
             "enum": [
                 None, "vsftpd_backdoor", "samba_usermap", "ingreslock_backdoor",
-                "ssh_credential_spray", "juice_shop_admin"
+                "ssh_credential_spray", "distcc_exec", "unrealircd_backdoor",
+                "juice_shop_admin"
             ]
         },
         # Privilege escalation fields
@@ -272,6 +281,29 @@ class AssessmentAssistant:
         self._discovered_ports: set = set()
         # Son ValidationGate sonucu (Hata 10: tek noktadan dogrulama)
         self._last_gate_result: Optional[Any] = None
+
+        # Kalıcı hedef hafızası (TargetMemory)
+        self.target_memory = target_memory
+        self.memory_data = None
+        try:
+            self.memory_data = self.target_memory.recall_target(self.target)
+            if self.memory_data:
+                for fe in self.memory_data.failed_exploits:
+                    self._failed_exploits.add(fe)
+                for p in self.memory_data.open_ports.keys():
+                    try:
+                        p_num = int(re.sub(r"\D", "", p))
+                        self._discovered_ports.add(p_num)
+                    except ValueError:
+                        pass
+                brief = self.target_memory.render_memory_brief(self.target)
+                if brief:
+                    self.conversation.append({
+                        "role": "user",
+                        "content": f"{brief}\n\nDo NOT run initial port scans again. Move directly to untested services or exploitation."
+                    })
+        except Exception as tm_err:
+            logger.warning(f"[TargetMemory] Init recall error: {tm_err}")
 
 
     # ── Finding Management ───────────────────────────────────────────────────
@@ -429,16 +461,25 @@ class AssessmentAssistant:
         evidence = str(finding.get("evidence_snippet", "")).strip()
         tool = str(finding.get("tool", current_tool or "assessment")).strip()
 
-        # ── ISTIHBARAT vs BULGU: cve_search/searchsploit sonuclari tek basina
-        # bulgu DEGILDIR; bunlar yalnizca istihbarat/lookup sonucudur. Gercek
-        # bir bulgu icin exploit/privesc/nmap kaniti veya dogrulanmis PoC gerekir.
-        if tool in ("cve_search", "searchsploit"):
+        # ── ISTIHBARAT vs BULGU: cve_search/searchsploit/web_search sonuclari
+        # tek basina bulgu DEGILDIR; bunlar yalnizca istihbarat/lookup sonucudur.
+        # Gercek bir bulgu icin exploit/privesc/nmap kaniti veya dogrulanmis PoC
+        # gerekir. Model 'tool' alanini yanlis doldursa bile, kanit metni bir
+        # lookup sonucu gibi gorunuyorsa (exploit baslik listesi, CVE listesi)
+        # bulguyu reddet.
+        _lookup_tools = ("cve_search", "searchsploit", "web_search")
+        _lookup_evidence_markers = [
+            "exploit title", "exploit db", "shellcodes:", "no results",
+            "| path", "edb id", "cve-", "nvd", "searchsploit",
+        ]
+        ev_lower = evidence.lower()
+        _looks_like_lookup = any(m in ev_lower for m in _lookup_evidence_markers)
+        if tool in _lookup_tools or _looks_like_lookup:
             # Kanit gercek bir exploit/dogrulama iceriyor mu?
             verified_markers = [
                 "uid=0", "root shell", "exploit confirmed", "payload executed",
                 "backdoor confirmed", "rce confirmed", "authentication bypass confirmed",
             ]
-            ev_lower = evidence.lower()
             if not any(m in ev_lower for m in verified_markers):
                 logger.info(
                     f"Intelligence-only finding from '{tool}' not recorded as finding: {category}"
@@ -453,8 +494,9 @@ class AssessmentAssistant:
                     ("samba usermap", "samba_usermap"),
                     ("ingreslock", "ingreslock_backdoor"),
                     ("port 1524", "ingreslock_backdoor"),
+                    ("distcc", "distcc_exec"),
+                    ("unrealircd", "unrealircd_backdoor"),
                     ("proftpd 1.3.1", None),
-                    ("unrealircd", None),
                 ]
                 exploit_hint = None
                 combined_evidence = (evidence + " " + category).lower()
@@ -483,6 +525,7 @@ class AssessmentAssistant:
                             f"[SYSTEM] The '{tool}' result is INTELLIGENCE ONLY. "
                             f"Note: '{exploit_hint}' was already attempted and FAILED (uid=0 not confirmed). "
                             f"Try a DIFFERENT exploit. Available: ingreslock_backdoor (port 1524), "
+                            f"distcc_exec (port 3632), unrealircd_backdoor (port 6667), "
                             f"ssh_credential_spray (port 22), vsftpd_backdoor (port 21), samba_usermap (port 445)."
                         )
                     })
@@ -522,14 +565,87 @@ class AssessmentAssistant:
 
     # ── LLM Suggestion Parsing ───────────────────────────────────────────────
 
-    def _get_compact_conversation(self, max_turns: int = 10) -> List[Dict[str, str]]:
+    def _get_compact_conversation(self, max_turns: int = 6, max_tokens_budget: int = 3800) -> List[Dict[str, str]]:
         """
-        Keeps system prompt at index 0 and slides the last N messages
-        to prevent exceeding the 8192 token context window.
+        Token-aware and turn-aware conversation compaction to strictly prevent
+        exceeding the 8192 token context window of open-source models (CyberStrike 35B).
+
+        Guarantees:
+        1. Preserves system prompt at index 0 (clamped if oversized).
+        2. Preserves active final prompt (index -1, clamped if oversized).
+        3. Prunes redundant intermediate full-context snapshots (superseded by current state).
+        4. Truncates intermediate tool outputs to keep high signal without token bloat.
+        5. Dynamically fits messages backwards to stay strictly within max_tokens_budget.
         """
-        if len(self.conversation) <= max_turns + 1:
-            return self.conversation
-        return [self.conversation[0]] + self.conversation[-max_turns:]
+        if not self.conversation:
+            return []
+        if len(self.conversation) == 1:
+            return [dict(self.conversation[0])]
+
+        system_msg = dict(self.conversation[0])
+        last_msg = dict(self.conversation[-1])
+
+        # Conservative estimation: ~3.0 chars per token for mixed Turkish/English/JSON/code
+        def est_tokens(text: str) -> int:
+            return max(1, int(len(text) / 3.0))
+
+        # Clamp system prompt if too long. Sistem promptu cok uzunsa (uzun
+        # kural listesi) kisalt; aksi halde 8192 token butcesinin buyuk kismini
+        # yer ve modelin JSON uretmesine yer kalmaz.
+        sys_content = system_msg.get("content", "")
+        if len(sys_content) > 3200:
+            system_msg["content"] = sys_content[:3000] + "\n...[system prompt truncated]"
+
+        # Clamp last message if too long (e.g. large scan output)
+        last_content = last_msg.get("content", "")
+        if len(last_content) > 3600:
+            last_msg["content"] = (
+                last_content[:2000]
+                + "\n\n...[intermediate scan output truncated for context limits]...\n\n"
+                + last_content[-1400:]
+            )
+
+        # Filter and clean intermediate messages
+        intermediate = self.conversation[1:-1]
+        cleaned: List[Dict[str, str]] = []
+        for msg in intermediate:
+            c = msg.get("content", "")
+            r = msg.get("role", "user")
+            # If this is an older full context snapshot (attack surface tree + recent history),
+            # replace it with a brief tombstone because the active prompt contains the current state.
+            if "=== Target Attack Surface:" in c:
+                cleaned.append({
+                    "role": r,
+                    "content": "[Previous tactical attack surface snapshot omitted — superseded by current step state]"
+                })
+            elif len(c) > 450:
+                cleaned.append({
+                    "role": r,
+                    "content": c[:400] + "\n...[truncated for token context limits]"
+                })
+            else:
+                cleaned.append(dict(msg))
+
+        # Budget calculation: reserve tokens for system prompt and last message
+        sys_tokens = est_tokens(system_msg.get("content", ""))
+        last_tokens = est_tokens(last_msg.get("content", ""))
+        remaining_budget = max(0, max_tokens_budget - sys_tokens - last_tokens)
+
+        # Select recent intermediate messages backwards up to max_turns and within budget
+        selected: List[Dict[str, str]] = []
+        used = 0
+        for msg in reversed(cleaned):
+            if len(selected) >= max_turns:
+                break
+            t = est_tokens(msg.get("content", ""))
+            if used + t <= remaining_budget:
+                selected.append(msg)
+                used += t
+            else:
+                break
+
+        selected.reverse()
+        return [system_msg] + selected + [last_msg]
 
     def _ask_llm_for_suggestion(self, context: str, skip_orchestrator: bool = False) -> Optional[Dict[str, Any]]:
         """
@@ -568,6 +684,7 @@ class AssessmentAssistant:
                     step_number=self.step_count,
                     target=self.target,
                     worker_activity=self._build_worker_activity(),
+                    attack_surface_tree=context_engine.render_attack_surface_tree(self.target),
                 )
                 self._last_orchestrator_directive = directive
                 if directive:
@@ -583,12 +700,20 @@ class AssessmentAssistant:
                 logger.warning(f"[Orchestrator] Directive failed: {oe}")
 
         self.conversation.append({"role": "user", "content": enriched_context})
-        compact_messages = self._get_compact_conversation(max_turns=10)
+        # Model 8192 token limitli. Sistem promptu + gecmis + son mesaj + uretim
+        # toplaminin 8192'yi ASMAMASI gerekir. Onceki 3800 budget'i gercek
+        # tokenizer'a gore olculmedigi icin input 9977 token'a kadar cikiyor,
+        # max_tokens 64'e dusuyor ve model gecerli JSON uretemeyip ayni eylemi
+        # tekrarliyordu. Guvenli hedef: input <= 4800 token, output >= 512 token.
+        compact_messages = self._get_compact_conversation(max_turns=6, max_tokens_budget=4800)
+        est_input_tokens = sum(len(m.get("content", "")) for m in compact_messages) // 3.0
+        calc_max_tokens = max(256, min(512, int(7800 - est_input_tokens)))
+
         try:
             response = self.llm_client.generate(
                 messages=compact_messages,
                 temperature=0.0,
-                max_tokens=1024,
+                max_tokens=calc_max_tokens,
                 enable_thinking=False,
                 json_schema=ASSESSMENT_JSON_SCHEMA
             )
@@ -655,11 +780,13 @@ class AssessmentAssistant:
                     ),
                 })
 
-            compact_retry_messages = self._get_compact_conversation(max_turns=10)
+            compact_retry_messages = self._get_compact_conversation(max_turns=4, max_tokens_budget=3500)
+            est_retry_tokens = sum(len(m.get("content", "")) for m in compact_retry_messages) // 3.0
+            calc_retry_tokens = max(128, min(256, int(7200 - est_retry_tokens)))
             response2 = self.llm_client.generate(
                 messages=compact_retry_messages,
                 temperature=0.0,
-                max_tokens=1024,
+                max_tokens=calc_retry_tokens,
                 enable_thinking=False,
                 json_schema=ASSESSMENT_JSON_SCHEMA
             )
@@ -699,7 +826,10 @@ class AssessmentAssistant:
         fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL | re.IGNORECASE)
         if fence_match:
             try:
-                return json.loads(fence_match.group(1))
+                res = json.loads(fence_match.group(1))
+                if isinstance(res, dict) and getattr(self, "target", None):
+                    res["target"] = self.target
+                return res
             except json.JSONDecodeError:
                 pass
 
@@ -729,7 +859,10 @@ class AssessmentAssistant:
                     if depth == 0:
                         candidate = content[start:i + 1]
                         try:
-                            return json.loads(candidate)
+                            res = json.loads(candidate)
+                            if isinstance(res, dict) and getattr(self, "target", None):
+                                res["target"] = self.target
+                            return res
                         except json.JSONDecodeError:
                             break
         return None
@@ -741,7 +874,9 @@ class AssessmentAssistant:
                        ports: Optional[str] = None, query: Optional[str] = None,
                        exploit: Optional[str] = None, privesc: Optional[str] = None,
                        username: Optional[str] = None, password: Optional[str] = None,
-                       command: Optional[str] = None) -> Dict[str, Any]:
+                       command: Optional[str] = None,
+                       action: Optional[str] = None, selector: Optional[str] = None,
+                       value: Optional[str] = None) -> Dict[str, Any]:
         """Calls the appropriate safe wrapper for an approved/skipped step."""
         if tool == "nmap":
             return suggest_nmap_scan(target, approved=approved, ports=ports)
@@ -803,6 +938,14 @@ class AssessmentAssistant:
                 port=ssh_port,
                 command=command,
             )
+        if tool in ("browser", "browser_action"):
+            return suggest_browser_action(
+                target=target,
+                action=action or command or "navigate",
+                selector=selector or service_name,
+                value=value or version,
+                approved=approved
+            )
         return {
             "status": "UNKNOWN_TOOL",
             "tool": tool,
@@ -829,42 +972,64 @@ class AssessmentAssistant:
         svc = (service_name or "").lower()
         failed = failed_exploits or self._failed_exploits or set()
 
-        # Portlari token'lara ayir (virgul/bosluk ile)
-        port_tokens = set()
+        arg_port_tokens = set()
         for token in re.split(r"[,\s]+", str(ports or "")):
             token = token.strip()
             if token.isdigit():
-                port_tokens.add(int(token))
-        # _discovered_ports ile de birleştir (nmap çıktısından parse edilenler)
-        port_tokens |= self._discovered_ports
-
-        def has_port(p: int) -> bool:
-            return p in port_tokens
+                arg_port_tokens.add(int(token))
 
         def pick(exploit_name: str) -> Optional[str]:
             """Exploit başarısız listesinde değilse seç, değilse None döndür."""
             return exploit_name if exploit_name not in failed else None
 
-        # Metasploitable2 icin en guvenilir root vektorleri
-        # Oncelik sirasi: ingreslock (direkt root) > ssh > vsftpd > samba
-        # Basarisiz olanlar atlanir; hepsi basarisizsa son secenek zorlanir.
+        # 1. Belirli bir servis veya port verildiyse dogrudan eslesen exploit
+        if 1524 in arg_port_tokens or "ingreslock" in svc:
+            return pick("ingreslock_backdoor") or "ingreslock_backdoor"
+        if 22 in arg_port_tokens or "ssh" in svc:
+            return pick("ssh_credential_spray") or "ssh_credential_spray"
+        if 21 in arg_port_tokens or "ftp" in svc or "vsftpd" in svc:
+            return pick("vsftpd_backdoor") or "vsftpd_backdoor"
+        if 445 in arg_port_tokens or 139 in arg_port_tokens or "samba" in svc or "smb" in svc:
+            return pick("samba_usermap") or "samba_usermap"
+        if 3632 in arg_port_tokens or "distcc" in svc:
+            return pick("distcc_exec") or "distcc_exec"
+        if 6667 in arg_port_tokens or 6697 in arg_port_tokens or "unrealircd" in svc or "irc" in svc:
+            return pick("unrealircd_backdoor") or "unrealircd_backdoor"
+        if 2121 in arg_port_tokens or "proftpd" in svc:
+            return pick("proftpd_modcopy") or "proftpd_modcopy"
+        if 1099 in arg_port_tokens or "rmi" in svc or "java" in svc:
+            return pick("java_rmi_deserialize") or "java_rmi_deserialize"
+        if 8787 in arg_port_tokens or "drb" in svc or "ruby" in svc:
+            return pick("ruby_drb_rce") or "ruby_drb_rce"
+        if 5900 in arg_port_tokens or "vnc" in svc:
+            return pick("vnc_null_auth") or "vnc_null_auth"
+        if 8180 in arg_port_tokens or "tomcat" in svc:
+            return pick("tomcat_manager_deploy") or "tomcat_manager_deploy"
+
+        # 2. Juice Shop
+        if "juice" in t or 3000 in arg_port_tokens or "localhost" in t:
+            return pick("juice_shop_admin") or "juice_shop_admin"
+
+        # 3. Metasploitable2 genel oncelik sirasi (belirli port/servis verilmemisse)
         if "metasploitable" in t:
             PRIORITY_ORDER = [
-                ("ingreslock_backdoor", lambda: True),          # her zaman dene (1524 yok olsa bile)
-                ("ssh_credential_spray", lambda: has_port(22) or "ssh" in svc),
-                ("vsftpd_backdoor", lambda: has_port(21) or "ftp" in svc or "vsftpd" in svc),
-                ("samba_usermap", lambda: has_port(445) or "samba" in svc or "smb" in svc),
+                ("ingreslock_backdoor", lambda: True),
+                ("ssh_credential_spray", lambda: 22 in self._discovered_ports or True),
+                ("vsftpd_backdoor", lambda: 21 in self._discovered_ports or True),
+                ("samba_usermap", lambda: 445 in self._discovered_ports or True),
+                ("distcc_exec", lambda: 3632 in self._discovered_ports or True),
+                ("unrealircd_backdoor", lambda: 6667 in self._discovered_ports or True),
+                ("proftpd_modcopy", lambda: 2121 in self._discovered_ports or True),
+                ("java_rmi_deserialize", lambda: 1099 in self._discovered_ports or True),
+                ("ruby_drb_rce", lambda: 8787 in self._discovered_ports or True),
+                ("vnc_null_auth", lambda: 5900 in self._discovered_ports or True),
+                ("tomcat_manager_deploy", lambda: 8180 in self._discovered_ports or True),
             ]
             for exploit_name, condition in PRIORITY_ORDER:
                 if condition() and exploit_name not in failed:
                     return exploit_name
-            # Hepsi basarisiz: ingreslock son care (basarisiz olsa bile tekrar dene
-            # cunku en kisa ve deterministik exploit'tir)
+            # Hepsi basarisiz: ingreslock son care
             return "ingreslock_backdoor"
-
-        # Juice Shop
-        if "juice" in t or has_port(3000) or "localhost" in t:
-            return pick("juice_shop_admin") or "juice_shop_admin"
 
         return pick("ingreslock_backdoor") or "ingreslock_backdoor"
 
@@ -923,12 +1088,14 @@ class AssessmentAssistant:
         self._last_rescue_step = step
         activity = self._build_worker_activity()
         try:
+            surface_tree = context_engine.render_attack_surface_tree(target)
             rescue = self.orchestrator_agent.analyze_and_rescue(
                 worker_activity=activity,
                 recent_worker_output=self._last_orchestrator_directive or "",
                 current_findings=self.findings,
                 step_number=step,
                 target=target,
+                attack_surface_tree=surface_tree,
             )
             self._last_orchestrator_directive = rescue
             if not rescue:
@@ -956,6 +1123,7 @@ class AssessmentAssistant:
                         step_number=step,
                         target=target,
                         visited_actions=self.visited_actions,
+                        attack_surface_tree=surface_tree,
                     )
                     if forced and forced.get("tool") not in ("done", None):
                         suggestion2 = forced
@@ -1007,6 +1175,13 @@ class AssessmentAssistant:
         password = suggestion.get("password")
         command = suggestion.get("command")
 
+        action = suggestion.get("action")
+        selector = suggestion.get("selector")
+        value = suggestion.get("value")
+
+        target = self.target or target
+        suggestion["target"] = target
+
         _svc_for_key = service_name
         if tool == "exploit":
             _svc_for_key = exploit or service_name
@@ -1028,11 +1203,27 @@ class AssessmentAssistant:
             username=username,
             password=password,
             command=command,
+            action=action,
+            selector=selector,
+            value=value,
         )
 
         output = result.get("output", "")
 
         if approved:
+            # ContextEngine Ingestion (L0/L1/L2 hierarchical context compression)
+            try:
+                context_engine.ingest(
+                    target=target,
+                    tool=tool,
+                    step=self.step_count,
+                    raw_output=output,
+                    suggestion=suggestion,
+                    command=result.get("command", "")
+                )
+            except Exception as ce_err:
+                logger.warning(f"[ContextEngine] Ingestion error: {ce_err}")
+
             if tool in ("exploit", "privesc"):
                 exploit_name_used = (
                     result.get("exploit") or result.get("technique") or exploit or privesc or tool
@@ -1257,10 +1448,21 @@ class AssessmentAssistant:
         print("\n" + "=" * 70)
         print(f"📊 Değerlendirme tamamlandı. {len(self.findings)} bulgu kaydedildi.")
         print("=" * 70)
+
+        # Distill session experience into persistent Target Memory
+        try:
+            self.target_memory.distill_session(
+                target=self.target,
+                findings=self.findings,
+                decision_chain=self.decision_chain
+            )
+        except Exception as dm_err:
+            logger.warning(f"[TargetMemory] Distillation error: {dm_err}")
+
         return self.findings
 
     def _build_context(self) -> str:
-        """Builds the context message for the LLM."""
+        """Builds the compact, high-density context message for the LLM."""
         existing = self._load_existing_findings()
         summary = "Şu ana kadar kaydedilen bulgular:\n"
         if existing:
@@ -1268,12 +1470,50 @@ class AssessmentAssistant:
                 summary += f"- {f.get('finding_id')}: {f.get('tool')} / {f.get('category')} / {f.get('severity')}\n"
         else:
             summary += "(henüz bulgu yok)\n"
-        summary += (
-            f"\nHedef: {self.target}\n"
-            f"Adım: {self.step_count}/{self.max_steps}\n"
-            "Bir sonraki mantıklı değerlendirme adımını JSON olarak öner."
-        )
-        return summary
+
+        try:
+            compact_context = context_engine.render_compact_context(
+                target=self.target,
+                current_step=self.step_count,
+                max_steps=self.max_steps,
+                recent_history_count=4
+            )
+
+            # ── TAKILMAYI ONLE: Basarisiz exploitler ve denenmemis servisler ──
+            # Model, context'te "bu zaten denendi ve basarisiz oldu" bilgisini
+            # net gormezse ayni eylemi tekrar tekrar onerir (24 adim boyunca
+            # vsftpd_backdoor onermesi gibi). Bu bolum her adimda modele
+            # deterministik bir "yapilacaklar / yapilmayacaklar" listesi verir.
+            guard_lines = []
+            if self._failed_exploits:
+                guard_lines.append(
+                    "⛔ BASARISIZ EXPLOITLER (BUNLARI TEKRAR DENEME): "
+                    + ", ".join(sorted(self._failed_exploits))
+                )
+            if self._exploit_succeeded:
+                guard_lines.append("✅ En az bir exploit basarili oldu (root/foothold elde edildi).")
+            untested = self._untested_services()
+            if untested:
+                guard_lines.append(
+                    "🎯 HENUZ TEST EDILMEMIS SERVISLER (siradaki hedefler): "
+                    + ", ".join(untested[:8])
+                )
+            guard_section = ("\n".join(guard_lines) + "\n\n") if guard_lines else ""
+
+            return (
+                f"{compact_context}\n\n"
+                f"{guard_section}"
+                f"{summary}\n"
+                "Bir sonraki mantıklı değerlendirme adımını JSON olarak öner."
+            )
+        except Exception as ce_err:
+            logger.warning(f"[ContextEngine] Compact context render fallback: {ce_err}")
+            summary += (
+                f"\nHedef: {self.target}\n"
+                f"Adım: {self.step_count}/{self.max_steps}\n"
+                "Bir sonraki mantıklı değerlendirme adımını JSON olarak öner."
+            )
+            return summary
 
     def _build_worker_activity(self) -> str:
         """
@@ -1326,7 +1566,8 @@ class AssessmentAssistant:
             if not self._exploit_succeeded:
                 failed_list = sorted(self._failed_exploits) if self._failed_exploits else ["(bilinmiyor)"]
                 untried = [e for e in ["ingreslock_backdoor", "ssh_credential_spray",
-                                       "vsftpd_backdoor", "samba_usermap"]
+                                       "vsftpd_backdoor", "samba_usermap",
+                                       "distcc_exec", "unrealircd_backdoor"]
                            if e not in self._failed_exploits]
                 lines.append(
                     f"  KRITIK: Worker exploit DENEDI ama HICBIRI BASARILI OLMADI. "
@@ -1344,8 +1585,10 @@ class AssessmentAssistant:
         lines.append(
             "  DESTEKLENEN EXPLOITLER (yalnizca bunlar calisir): "
             "vsftpd_backdoor, samba_usermap, ingreslock_backdoor, "
-            "ssh_credential_spray, juice_shop_admin. "
-            "MySQL/ProFTPD/UnrealIRCd/distcc/PostgreSQL icin HAZIR EXPLOIT YOKTUR; "
+            "ssh_credential_spray, distcc_exec, unrealircd_backdoor, "
+            "proftpd_modcopy, java_rmi_deserialize, ruby_drb_rce, "
+            "vnc_null_auth, tomcat_manager_deploy, juice_shop_admin. "
+            "MySQL/PostgreSQL icin HAZIR EXPLOIT YOKTUR; "
             "bu servislerde israr etmeyin, searchsploit/cve_search ile dogrulayip "
             "finding olarak kaydedin ve DIGER servise gecin."
         )
@@ -1358,19 +1601,39 @@ class AssessmentAssistant:
     # NOT: Eslesme YALNIZCA gercek eylem alanlarinda yapilir (tool/service_name/
     # exploit/ports); serbest 'thought' metni TARANMAZ (yanlis pozitif onlenir).
     _CRITICAL_SERVICES = [
+        # (port, canonical_name, [keyword aliases])
+        # Metasploitable2 tam zafiyet haritası (nmap -sV ile doğrulanmış portlar).
         (21, "vsftpd", ["vsftpd", "ftp"]),
         (22, "ssh", ["ssh", "msfadmin"]),
-        (445, "samba", ["samba", "smb"]),
-        (1524, "ingreslock", ["ingreslock"]),
-        (3306, "mysql", ["mysql"]),
-        (5432, "postgresql", ["postgres", "postgresql"]),
-        (6667, "unrealircd", ["unrealircd", "irc"]),
-        (80, "apache", ["apache", "http", "nikto", "gobuster", "whatweb"]),
-        (3632, "distcc", ["distcc"]),
         (23, "telnet", ["telnet"]),
-        (2049, "nfs", ["nfs"]),
+        (25, "smtp", ["smtp", "postfix", "smtpd"]),
+        (80, "apache", ["apache", "http", "nikto", "gobuster", "whatweb"]),
+        (111, "rpcbind", ["rpcbind", "rpc", "portmapper"]),
+        (139, "samba", ["samba", "smb", "netbios"]),
+        (445, "samba", ["samba", "smb", "netbios"]),
+        (512, "rexec", ["rexec", "exec", "rsh"]),
+        (513, "rlogin", ["rlogin", "login"]),
+        (514, "rsh", ["rsh", "shell", "tcpwrapped"]),
+        (1099, "java-rmi", ["rmi", "java", "rmiregistry"]),
+        (1524, "ingreslock", ["ingreslock"]),
+        (2121, "proftpd", ["proftpd"]),
+        (3306, "mysql", ["mysql"]),
+        (3632, "distcc", ["distcc"]),
+        (5432, "postgresql", ["postgres", "postgresql"]),
         (5900, "vnc", ["vnc"]),
-        (1099, "java-rmi", ["rmi", "java"]),
+        (6667, "unrealircd", ["unrealircd", "irc"]),
+        (6697, "unrealircd", ["unrealircd", "irc"]),
+        (8180, "tomcat", ["tomcat", "catalina"]),
+        (8787, "ruby-drb", ["drb", "ruby"]),
+        (2049, "nfs", ["nfs"]),
+    ]
+
+    # Web uygulaması dizinleri (port 80 üzerinde). Bunlar da "test edilmiş"
+    # sayılmalı; aksi halde model 'done' dediğinde sistem sürekli web
+    # uygulamalarını test etmeye zorlar.
+    _WEB_APP_PATHS = [
+        "/dvwa/", "/mutillidae/", "/phpMyAdmin/", "/tikiwiki/",
+        "/twiki/", "/dav/", "/test/", "/doc/",
     ]
 
     def _untested_services(self) -> List[str]:
@@ -1387,6 +1650,11 @@ class AssessmentAssistant:
         # Gercek eylem alanlarini topla (thought HARIC)
         action_text_parts = []
         tested_ports = set()
+        # Exploit'i olan servisler icin yalnizca GERCEK exploit/privesc denemesi
+        # "test edildi" sayilir. searchsploit/cve_search lookup'lari tek basina
+        # yeterli DEGILDIR; aksi halde model lookup yapip servisi 'test edilmis'
+        # sayar ve gercek istismar hic denenmez.
+        exploit_attempted_text_parts = []
         for d in self.decision_chain:
             tool = str(d.get("tool", "")).lower()
             svc = str(d.get("service_name", "")).lower()
@@ -1394,23 +1662,168 @@ class AssessmentAssistant:
             privesc = str(d.get("privesc", "")).lower()
             ports = str(d.get("ports", ""))
             action_text_parts.append(f"{tool} {svc} {exploit} {privesc}")
+            if tool in ("exploit", "privesc"):
+                exploit_attempted_text_parts.append(f"{svc} {exploit} {privesc}")
             # Portlari token bazli ayir (substring degil)
             for token in re.split(r"[,\s]+", ports):
                 if token.strip().isdigit():
                     tested_ports.add(int(token.strip()))
 
         action_text = " ".join(action_text_parts)
+        exploit_attempted_text = " ".join(exploit_attempted_text_parts)
+
+        # Exploit'i olan servisler: bu servisler icin gercek exploit denemesi sart.
+        _EXPLOIT_REQUIRED = {
+            "vsftpd": ["vsftpd", "ftp"],
+            "ssh": ["ssh", "msfadmin"],
+            "samba": ["samba", "smb"],
+            "ingreslock": ["ingreslock"],
+            "distcc": ["distcc"],
+            "unrealircd": ["unrealircd", "irc"],
+            "proftpd": ["proftpd"],
+            "java-rmi": ["rmi", "java"],
+            "ruby-drb": ["drb", "ruby"],
+            "vnc": ["vnc"],
+            "tomcat": ["tomcat"],
+        }
 
         untested = []
         for port, name, keywords in self._CRITICAL_SERVICES:
             # 1. Port tam eslesme ile test edildi mi?
             if port in tested_ports:
                 continue
-            # 2. Servis adi gercek eylem alanlarinda geciyor mu?
+            # 2. Exploit'i olan bir servis mi? Oyleyse GERCEK exploit denemesi ara.
+            if name in _EXPLOIT_REQUIRED:
+                if any(kw in exploit_attempted_text for kw in keywords):
+                    continue
+                untested.append(f"{name} (port {port})")
+                continue
+            # 3. Exploit'i olmayan servisler icin herhangi bir eylem yeterli.
             if any(kw in action_text for kw in keywords):
                 continue
             untested.append(f"{name} (port {port})")
         return untested
+
+    def get_fallback_action_for_untested(self) -> Optional[Dict[str, Any]]:
+        """
+        When the model (or orchestrator) prematurely says 'done' while critical
+        services remain untested, this method deterministically generates the next
+        logical reconnaissance/vulnerability check so the assessment reaches
+        full coverage rather than stalling.
+        """
+        untested = self._untested_services()
+
+        SERVICE_TOOL_REC = {
+            "vsftpd": {"tool": "exploit", "exploit": "vsftpd_backdoor", "ports": "21", "service_name": "vsftpd", "rationale": "Test vsftpd 2.3.4 smiley face backdoor (CVE-2011-2523) on port 21."},
+            "ssh": {"tool": "exploit", "exploit": "ssh_credential_spray", "ports": "22", "service_name": "ssh", "rationale": "Spray default credentials on SSH port 22."},
+            "samba": {"tool": "exploit", "exploit": "samba_usermap", "ports": "445", "service_name": "samba", "rationale": "Test Samba 3.0.20 usermap script RCE (CVE-2007-2447)."},
+            "ingreslock": {"tool": "exploit", "exploit": "ingreslock_backdoor", "ports": "1524", "service_name": "ingreslock", "rationale": "Connect to Ingreslock backdoor on port 1524."},
+            "mysql": {"tool": "searchsploit", "service_name": "mysql", "version": "5.0", "rationale": "Enumerate MySQL 5.0 vulnerabilities (CVE-2012-2122 / UDF privesc)."},
+            "postgresql": {"tool": "searchsploit", "service_name": "postgresql", "version": "8.3", "rationale": "Enumerate PostgreSQL 8.3 known vulnerabilities."},
+            "distcc": {"tool": "exploit", "exploit": "distcc_exec", "ports": "3632", "service_name": "distcc", "rationale": "Test distcc daemon code execution (CVE-2004-2687) on port 3632."},
+            "telnet": {"tool": "nmap", "ports": "23", "rationale": "Banner grab and check unauthenticated access on Telnet port 23."},
+            "nfs": {"tool": "nmap", "ports": "2049", "rationale": "Check exported NFS shares and permissions."},
+            "vnc": {"tool": "exploit", "exploit": "vnc_null_auth", "ports": "5900", "service_name": "vnc", "rationale": "Test VNC null/weak authentication bypass on port 5900."},
+            "java-rmi": {"tool": "exploit", "exploit": "java_rmi_deserialize", "ports": "1099", "service_name": "java-rmi", "rationale": "Test Java RMI registry deserialization RCE on port 1099."},
+            "proftpd": {"tool": "exploit", "exploit": "proftpd_modcopy", "ports": "2121", "service_name": "proftpd", "rationale": "Test ProFTPD 1.3.1 mod_copy unauthenticated file copy (CVE-2015-3306)."},
+            "unrealircd": {"tool": "exploit", "exploit": "unrealircd_backdoor", "ports": "6667", "service_name": "unrealircd", "rationale": "Test UnrealIRCd 3.2.8.1 backdoor trigger (CVE-2010-2075) on port 6667."},
+            "smtp": {"tool": "searchsploit", "service_name": "postfix", "version": None, "rationale": "Enumerate Postfix SMTP vulnerabilities and check for open relay."},
+            "rpcbind": {"tool": "nmap", "ports": "111", "rationale": "Enumerate RPC services via rpcinfo/portmapper on port 111."},
+            "rexec": {"tool": "searchsploit", "service_name": "rsh", "version": None, "rationale": "Check rexec/rsh unauthenticated remote execution on port 512."},
+            "rlogin": {"tool": "searchsploit", "service_name": "rlogin", "version": None, "rationale": "Check rlogin trust-based authentication bypass on port 513."},
+            "rsh": {"tool": "searchsploit", "service_name": "rsh", "version": None, "rationale": "Check rsh trust-based authentication bypass on port 514."},
+            "tomcat": {"tool": "exploit", "exploit": "tomcat_manager_deploy", "ports": "8180", "service_name": "tomcat", "rationale": "Test Apache Tomcat manager default credentials and WAR deployment on port 8180."},
+            "ruby-drb": {"tool": "exploit", "exploit": "ruby_drb_rce", "ports": "8787", "service_name": "ruby-drb", "rationale": "Test Ruby DRb remote code execution on port 8787."},
+            "apache": {"tool": "nikto", "ports": "80", "service_name": "apache", "rationale": "Run nikto web vulnerability scan against Apache 2.2.8 on port 80."},
+        }
+
+        if untested:
+            for u in untested:
+                svc_clean = u.split("(")[0].strip().lower()
+                rec = SERVICE_TOOL_REC.get(svc_clean)
+                if rec:
+                    _svc_for_key = rec.get("exploit") or rec.get("service_name")
+                    action_key = self._action_key(rec["tool"], self.target, rec.get("ports"), _svc_for_key, rec.get("version"))
+                    if action_key not in self.visited_actions:
+                        return {
+                            "thought": f"Comprehensive testing: {svc_clean} has not been assessed yet. Executing security verification.",
+                            "tool": rec["tool"],
+                            "target": self.target,
+                            "param": None,
+                            "ports": rec.get("ports"),
+                            "service_name": rec.get("service_name"),
+                            "version": rec.get("version"),
+                            "exploit": rec.get("exploit"),
+                            "rationale": rec["rationale"],
+                            "finding": None
+                        }
+
+            first_untested = untested[0].split("(")[0].strip().lower()
+            return {
+                "thought": f"Comprehensive testing: {first_untested} has not been assessed yet. Checking service vulnerability database.",
+                "tool": "searchsploit",
+                "target": self.target,
+                "param": None,
+                "ports": None,
+                "service_name": first_untested,
+                "version": None,
+                "rationale": f"Identify vulnerabilities for {first_untested}.",
+                "finding": None
+            }
+
+        # ── Kapsamdaki tüm servisler test edildiyse: Denenmemiş exploit veya privesc tekniklerini tamamla ──
+        if "metasploitable" in self.target.lower():
+            metasploitable_exploits = [
+                ("vsftpd_backdoor", "vsftpd 2.3.4 Backdoor (CVE-2011-2523)", "21"),
+                ("samba_usermap", "Samba 3.0.20 Usermap RCE (CVE-2007-2447)", "445"),
+                ("ingreslock_backdoor", "Ingreslock port 1524 backdoor", "1524"),
+                ("ssh_credential_spray", "SSH default credential spray", "22"),
+                ("distcc_exec", "distcc daemon code execution (CVE-2004-2687)", "3632"),
+                ("unrealircd_backdoor", "UnrealIRCd 3.2.8.1 backdoor (CVE-2010-2075)", "6667"),
+                ("proftpd_modcopy", "ProFTPD 1.3.1 mod_copy unauthenticated file copy (CVE-2015-3306)", "2121"),
+                ("java_rmi_deserialize", "Java RMI registry deserialization RCE", "1099"),
+                ("tomcat_manager_deploy", "Apache Tomcat manager default credentials WAR deploy", "8180"),
+                ("ruby_drb_rce", "Ruby DRb remote code execution", "8787"),
+                ("vnc_null_auth", "VNC null authentication bypass", "5900"),
+            ]
+            for exp_name, exp_desc, port_str in metasploitable_exploits:
+                exp_key = self._action_key("exploit", self.target, port_str, exp_name, None)
+                exp_key_noport = self._action_key("exploit", self.target, None, exp_name, None)
+                if (exp_key not in self.visited_actions and 
+                    exp_key_noport not in self.visited_actions and 
+                    exp_name not in self._failed_exploits):
+                    return {
+                        "thought": f"Exhaustive testing: Attempting exploit '{exp_name}' against target.",
+                        "tool": "exploit",
+                        "target": self.target,
+                        "ports": port_str,
+                        "exploit": exp_name,
+                        "rationale": f"Attempt exploitation of {exp_desc}.",
+                        "finding": None
+                    }
+
+            # Foothold veya root varsa post-exploitation ve yetki yükseltme denetimleri
+            if self._exploit_succeeded or self._credentials:
+                privesc_checks = [
+                    ("verify_root", "Verify Root Access (Proof of Privilege)"),
+                    ("sudoers_audit", "Audit sudoers permissions (sudo -l)"),
+                    ("suid_enumeration", "Scan filesystem for misconfigured SUID binaries"),
+                ]
+                for p_tech, p_desc in privesc_checks:
+                    p_key = self._action_key("privesc", self.target, None, p_tech, None)
+                    if p_key not in self.visited_actions:
+                        return {
+                            "thought": f"Post-exploitation verification: Executing {p_desc}.",
+                            "tool": "privesc",
+                            "target": self.target,
+                            "privesc": p_tech,
+                            "username": "msfadmin",
+                            "password": "msfadmin",
+                            "rationale": f"Perform {p_desc}.",
+                            "finding": None
+                        }
+
+        return None
 
     def _feed_result_to_llm(self, tool: str, target: str, approved: bool, output: str,
                             exploit_success: Optional[bool] = None,
@@ -1452,11 +1865,20 @@ class AssessmentAssistant:
             else:
                 # Başarısız exploit: hangi exploit'in başarısız olduğunu ve ne denemeleri gerektiğini söyle
                 untried = [
-                    e for e in ["ingreslock_backdoor", "ssh_credential_spray",
-                                "vsftpd_backdoor", "samba_usermap"]
+                    e for e in [
+                        "ingreslock_backdoor", "ssh_credential_spray",
+                        "vsftpd_backdoor", "samba_usermap", "distcc_exec",
+                        "unrealircd_backdoor", "proftpd_modcopy",
+                        "java_rmi_deserialize", "ruby_drb_rce",
+                        "vnc_null_auth", "tomcat_manager_deploy",
+                    ]
                     if e not in self._failed_exploits
                 ]
                 untried_str = ", ".join(untried) if untried else "none remaining"
+                # Henuz test edilmemis servisleri de acikca bildir; model boylece
+                # ayni servise takilmak yerine yeni hedefe yonelir.
+                untested_svcs = self._untested_services()
+                untested_str = ", ".join(untested_svcs[:6]) if untested_svcs else "none remaining"
                 msg = (
                     f"Exploit '{exploit_name or tool}' result: SUCCESS=False. "
                     f"The exploit was attempted but uid=0 was NOT confirmed. "
@@ -1464,7 +1886,9 @@ class AssessmentAssistant:
                     f"Output:\n{output[:1200]}\n\n"
                     f"Failed exploits so far: {sorted(self._failed_exploits) or 'none yet'}.\n"
                     f"Untried exploits available: {untried_str}.\n"
-                    f"IMMEDIATELY try the next untried exploit or move to a different service."
+                    f"Untested services remaining: {untested_str}.\n"
+                    f"IMMEDIATELY try the next untried exploit or move to a different service. "
+                    f"NEVER propose an exploit that is in the 'Failed exploits' list."
                 )
         else:
             msg = (
@@ -1507,6 +1931,18 @@ class AssessmentAssistant:
         """
         if not output:
             return
+
+        # ── ISTIHBARAT vs BULGU (KRITIK) ─────────────────────────────────────
+        # searchsploit/cve_search/web_search ciktilari yalnizca ARAMA SONUCUDUR;
+        # hedefte o servisin/zafiyetin GERCEKTEN var oldugunun kaniti DEGILDIR.
+        # Ornegin searchsploit 'vnc' aramasi RealVNC basliklari dondurur ama
+        # hedefte VNC acik olmayabilir. Bu yuzden bu araclarin ciktilarindan
+        # otomatik bulgu CIKARILMAZ. Gercek bulgu icin nmap/whatweb/nikto gibi
+        # kesif araclarinin ciktisi veya dogrulanmis exploit kaniti gerekir.
+        if tool in ("searchsploit", "cve_search", "web_search"):
+            logger.info(f"[Intelligence] '{tool}' ciktisindan otomatik bulgu cikarilmadi (lookup-only).")
+            return
+
         for pattern, category, cwe in self._KNOWN_VULN_PATTERNS:
             m = re.search(pattern, output, re.IGNORECASE)
             if m:
@@ -1559,6 +1995,13 @@ class AssessmentAssistant:
                 "samba_usermap": "Remote Code Execution (CVE-2007-2447)",
                 "ingreslock_backdoor": "Backdoor Exploitation",
                 "ssh_credential_spray": "Weak Default Credentials",
+                "distcc_exec": "Remote Code Execution (CVE-2004-2687)",
+                "unrealircd_backdoor": "Backdoor Exploitation (CVE-2010-2075)",
+                "proftpd_modcopy": "Unauthenticated File Copy (CVE-2015-3306)",
+                "java_rmi_deserialize": "Insecure Java RMI Registry (Deserialization Surface)",
+                "ruby_drb_rce": "Remote Code Execution (Ruby DRb)",
+                "vnc_null_auth": "VNC Weak/Null Authentication",
+                "tomcat_manager_deploy": "Apache Tomcat Manager Default Credentials",
                 "juice_shop_admin": "Broken Access Control",
             }
             cwe_map = {
@@ -1566,11 +2009,27 @@ class AssessmentAssistant:
                 "samba_usermap": "CWE-78",
                 "ingreslock_backdoor": "CWE-912",
                 "ssh_credential_spray": "CWE-521",
+                "distcc_exec": "CWE-78",
+                "unrealircd_backdoor": "CWE-912",
+                "proftpd_modcopy": "CWE-22",
+                "java_rmi_deserialize": "CWE-502",
+                "ruby_drb_rce": "CWE-78",
+                "vnc_null_auth": "CWE-287",
+                "tomcat_manager_deploy": "CWE-521",
                 "juice_shop_admin": "CWE-284",
+            }
+            # Bazi exploitler yalnizca zafiyet YUZEYINI dogrular (RCE kaniti
+            # degil). Bunlar Critical yerine High/Medium olarak kaydedilir ki
+            # rapor gercek RCE ile karismasin.
+            _surface_only = {
+                "java_rmi_deserialize": "High",
+                "vnc_null_auth": "High",
+                "proftpd_modcopy": "High",
+                "tomcat_manager_deploy": "High",
             }
             category = category_map.get(exploit_name, "Active Exploitation")
             cwe = cwe_map.get(exploit_name, "CWE-912")
-            severity = "Critical"
+            severity = _surface_only.get(exploit_name, "Critical")
         else:  # privesc
             technique = result.get("technique", "")
             category = "Privilege Escalation"
