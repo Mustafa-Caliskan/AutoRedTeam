@@ -124,6 +124,12 @@ class TestUntestedServices:
             {"step": 18, "tool": "exploit", "exploit": "proftpd_modcopy", "thought": "proftpd 2121"},
             {"step": 19, "tool": "exploit", "exploit": "tomcat_manager_deploy", "thought": "tomcat 8180"},
             {"step": 20, "tool": "exploit", "exploit": "ruby_drb_rce", "thought": "ruby drb 8787"},
+            # Web uygulamalari (path bazli)
+            {"step": 21, "tool": "nikto", "service_name": "dvwa", "thought": "dvwa"},
+            {"step": 22, "tool": "nikto", "service_name": "mutillidae", "thought": "mutillidae"},
+            {"step": 23, "tool": "searchsploit", "service_name": "phpmyadmin", "thought": "phpmyadmin"},
+            {"step": 24, "tool": "searchsploit", "service_name": "tikiwiki", "thought": "tikiwiki"},
+            {"step": 25, "tool": "searchsploit", "service_name": "webdav", "thought": "webdav"},
         ]
         untested = a._untested_services()
         assert len(untested) == 0

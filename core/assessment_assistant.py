@@ -277,6 +277,8 @@ class AssessmentAssistant:
         self._failed_exploits: set = set()
         # Basarili exploit takibi: en az bir exploit uid=0 ile dogrulandi mi?
         self._exploit_succeeded: bool = False
+        # Elde edilen kimlik bilgileri (foothold). Exploit basarisi sonrasi dolar.
+        self._credentials: set = set()
         # nmap ciktisinda tespit edilen portlar (Hata 8): decision_chain.ports
         # alanina yazilmayan portlari da takip etmek icin kullanilir.
         self._discovered_ports: set = set()
@@ -1227,6 +1229,9 @@ class AssessmentAssistant:
                 success = result.get("success", False)
                 if success:
                     self._exploit_succeeded = True
+                    # Foothold kimlik bilgilerini kaydet (privesc icin gerekli)
+                    if username and password:
+                        self._credentials.add((username, password))
                     self._record_exploit_finding(tool, result)
                 else:
                     if exploit_name_used:
@@ -1668,6 +1673,14 @@ class AssessmentAssistant:
         (8180, "tomcat", ["tomcat", "catalina"]),
         (8787, "ruby-drb", ["drb", "ruby"]),
         (2049, "nfs", ["nfs"]),
+        # ── Web uygulamalari (port 80 uzerinde, path bazli) ──────────────────
+        # Metasploitable2'nin en zengin zafiyet kaynagi. Her biri ayri test
+        # edilmeli; aksi halde "apache test edildi" denip gecilir.
+        (80, "dvwa", ["dvwa"]),
+        (80, "mutillidae", ["mutillidae"]),
+        (80, "phpmyadmin", ["phpmyadmin", "phpmyadmin/"]),
+        (80, "tikiwiki", ["tikiwiki", "twiki"]),
+        (80, "webdav", ["webdav", "dav"]),
     ]
 
     # Web uygulaması dizinleri (port 80 üzerinde). Bunlar da "test edilmiş"
@@ -1706,10 +1719,17 @@ class AssessmentAssistant:
             action_text_parts.append(f"{tool} {svc} {exploit} {privesc}")
             if tool in ("exploit", "privesc"):
                 exploit_attempted_text_parts.append(f"{svc} {exploit} {privesc}")
-            # Portlari token bazli ayir (substring degil)
-            for token in re.split(r"[,\s]+", ports):
-                if token.strip().isdigit():
-                    tested_ports.add(int(token.strip()))
+            # Portlari token bazli ayir (substring degil).
+            # ONEMLI: Genis taramalar (nmap "1-10000" veya 10+ port) bir
+            # servisi "test edildi" SAYMAZ; bunlar yalnizca kesif taramasidir.
+            # Aksi halde model tek bir nmap ile tum portlari listeleyip her
+            # servisi "test edilmis" gosterebilir ve erken bitirir.
+            port_tokens = [
+                int(t.strip()) for t in re.split(r"[,\s]+", ports)
+                if t.strip().isdigit()
+            ]
+            if len(port_tokens) <= 5:
+                tested_ports.update(port_tokens)
 
         action_text = " ".join(action_text_parts)
         exploit_attempted_text = " ".join(exploit_attempted_text_parts)
@@ -1730,9 +1750,21 @@ class AssessmentAssistant:
         }
 
         untested = []
+        # Ayni portu paylasan servisler (ornegin port 80: apache, dvwa,
+        # mutillidae, phpmyadmin, tikiwiki, webdav). Bu durumda port eslesmesi
+        # TEK BASINA yeterli degildir; aksi halde "apache test edildi" denince
+        # tum web uygulamalari da test edilmis sayilir ve hicbiri gercekte
+        # denenmez. Bu portlar icin yalnizca keyword eslesmesi kullanilir.
+        _SHARED_PORTS = {80, 443, 8180, 8080}
+
+        untested = []
         for port, name, keywords in self._CRITICAL_SERVICES:
             # 1. Port tam eslesme ile test edildi mi?
-            if port in tested_ports:
+            #    ONEMLI: Genis taramalar (nmap "1-10000" veya 10+ port) bir
+            #    servisi "test edildi" SAYMAZ; bunlar yalnizca kesif taramasidir.
+            #    Ayrica paylasilan portlarda (80 vb.) port eslesmesi yeterli
+            #    degildir; keyword eslesmesi aranir.
+            if port in tested_ports and port not in _SHARED_PORTS:
                 continue
             # 2. Exploit'i olan bir servis mi? Oyleyse GERCEK exploit denemesi ara.
             if name in _EXPLOIT_REQUIRED:
@@ -1777,6 +1809,12 @@ class AssessmentAssistant:
             "tomcat": {"tool": "exploit", "exploit": "tomcat_manager_deploy", "ports": "8180", "service_name": "tomcat", "rationale": "Test Apache Tomcat manager default credentials and WAR deployment on port 8180."},
             "ruby-drb": {"tool": "exploit", "exploit": "ruby_drb_rce", "ports": "8787", "service_name": "ruby-drb", "rationale": "Test Ruby DRb remote code execution on port 8787."},
             "apache": {"tool": "nikto", "ports": "80", "service_name": "apache", "rationale": "Run nikto web vulnerability scan against Apache 2.2.8 on port 80."},
+            # ── Web uygulamalari (path bazli) ────────────────────────────────
+            "dvwa": {"tool": "nikto", "ports": "80", "service_name": "dvwa", "rationale": "Scan DVWA (Damn Vulnerable Web App) for SQLi/XSS/file-inclusion on /dvwa/."},
+            "mutillidae": {"tool": "nikto", "ports": "80", "service_name": "mutillidae", "rationale": "Scan Mutillidae for OWASP Top 10 vulnerabilities on /mutillidae/."},
+            "phpmyadmin": {"tool": "searchsploit", "service_name": "phpmyadmin", "version": None, "rationale": "Check phpMyAdmin default credentials and known CVEs on /phpMyAdmin/."},
+            "tikiwiki": {"tool": "searchsploit", "service_name": "tikiwiki", "version": None, "rationale": "Check TikiWiki CMS known vulnerabilities on /tikiwiki/."},
+            "webdav": {"tool": "searchsploit", "service_name": "webdav", "version": None, "rationale": "Check WebDAV PUT/method abuse on /dav/."},
         }
 
         if untested:
