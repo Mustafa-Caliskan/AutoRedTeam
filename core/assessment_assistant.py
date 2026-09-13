@@ -140,24 +140,19 @@ JSON Schema:
 
 ### ROOT SONRASI DEVAM (KRITIK - TUM ZAFIYETLERI BUL)
 1. ROOT ALMAK DEGERLENDIRMENIN SONU DEGILDIR. Bir servis uzerinden root (uid=0) elde etsen bile, diger acik servisleri de test etmeye DEVAM ET. Sadece root alip "done" deme.
-2. Metasploitable2'de test edilmesi gereken servisler ve HAZIR EXPLOIT durumu:
-   - Port 21: vsftpd 2.3.4 -> "exploit":"vsftpd_backdoor" (HAZIR)
-   - Port 22: SSH zayif kimlik -> "exploit":"ssh_credential_spray" (HAZIR)
-   - Port 445: Samba 3.0.20 -> "exploit":"samba_usermap" (HAZIR)
-   - Port 1524: Ingreslock backdoor -> "exploit":"ingreslock_backdoor" (HAZIR)
-   - Port 3632: distcc CVE-2004-2687 -> "exploit":"distcc_exec" (HAZIR)
-   - Port 6667: UnrealIRCd CVE-2010-2075 -> "exploit":"unrealircd_backdoor" (HAZIR)
-   - Port 3306: MySQL 5.0 -> searchsploit/cve_search ile dogrula, finding kaydet, BASKA SERVISE GEC.
-   - Port 5432: PostgreSQL -> searchsploit/cve_search ile dogrula, finding kaydet, BASKA SERVISE GEC.
-   - Port 80: Apache/PHP -> nikto/gobuster ile web dizinlerini (/dvwa/, /mutillidae/, /phpMyAdmin/) tara.
-3. BIR EXPLOIT BASARISIZ OLURSA (ornegin vsftpd port 6200 acilmadi), O SERVISE TAKILIP KALMA. Ayni servisi 2'den fazla kez DENEME. Hemen diger servise gec.
-4. Her basarili exploit/privesc icin bir "finding" kaydet (evidence ile). Boylece tum zafiyetler rapora girer.
-5. "done" KARARI ICIN KATI KOSULLAR: "tool":"done" demeden ONCE su servislerin HEPSI test edilmis olmalidir:
-   vsftpd(21), SSH(22), Samba(445), ingreslock(1524), MySQL(3306), PostgreSQL(5432), UnrealIRCd(6667), Apache/PHP(80), distcc(3632).
-   Her biri icin en az bir kez searchsploit/cve_search veya exploit denemesi yapilmis olmalidir. Eksik servis varsa "done" DEME, o servisi test et.
-6. ZERO FALSE POSITIVES (7-QUESTION VALIDATION GATE):
+2. DINAMIK KESIF YAP (EZBER YAPMA): Sana verilen tarama sonuclarindaki (attack surface tree) servisleri ve versiyonlari KENDIN analiz et. Bir servisin zafiyetini bilmiyorsan:
+   - "tool":"searchsploit" ile o servis+versiyon icin exploit ara, VEYA
+   - "tool":"cve_search" ile guncel CVE istihbarati al, VEYA
+   - "tool":"web_search" ile internette PoC/exploit arastir.
+   Model egitim verisi 2024'e kadar olabilir; yeni zafiyetler icin MUTLAKA web_search/cve_search kullan.
+3. HAZIR EXPLOITLER (yalnizca bunlar kod olarak mevcut): vsftpd_backdoor, samba_usermap, ingreslock_backdoor, ssh_credential_spray, distcc_exec, unrealircd_backdoor, proftpd_modcopy, java_rmi_deserialize, ruby_drb_rce, vnc_null_auth, tomcat_manager_deploy, juice_shop_admin.
+   Bir servis icin hazir exploit YOKSA, searchsploit/cve_search/web_search ile arastir ve bulguyu finding olarak kaydet; ardindan DIGER servise gec.
+4. BIR EXPLOIT BASARISIZ OLURSA, O SERVISE TAKILIP KALMA. Ayni exploit'i 2'den fazla kez DENEME. Hemen diger servise gec.
+5. Her basarili exploit/privesc icin bir "finding" kaydet (evidence ile). Boylece tum zafiyetler rapora girer.
+6. "done" KARARI: Attack surface tree'deki TUM acik servisler test edilmis olmalidir. Eksik servis varsa "done" DEME.
+7. ZERO FALSE POSITIVES (7-QUESTION VALIDATION GATE):
    - Never emit findings for missing headers alone (CSP/HSTS), banner grabbing alone without CVE, or open redirect alone without chain. Concrete proof required.
-7. ZERO FLUFF: Output ONLY the JSON object. Start with '{' and end with '}'."""
+8. ZERO FLUFF: Output ONLY the JSON object. Start with '{' and end with '}'."""
 
 
 ASSESSMENT_JSON_SCHEMA: Dict[str, Any] = {
@@ -188,7 +183,8 @@ ASSESSMENT_JSON_SCHEMA: Dict[str, Any] = {
             "enum": [
                 None, "vsftpd_backdoor", "samba_usermap", "ingreslock_backdoor",
                 "ssh_credential_spray", "distcc_exec", "unrealircd_backdoor",
-                "juice_shop_admin"
+                "proftpd_modcopy", "java_rmi_deserialize", "ruby_drb_rce",
+                "vnc_null_auth", "tomcat_manager_deploy", "juice_shop_admin"
             ]
         },
         # Privilege escalation fields
@@ -196,7 +192,7 @@ ASSESSMENT_JSON_SCHEMA: Dict[str, Any] = {
             "type": ["string", "null"],
             "enum": [
                 None, "suid_enumeration", "sudoers_audit", "sudo_privesc",
-                "gtfobins_privesc", "verify_root"
+                "gtfobins_privesc", "verify_root", "linpeas"
             ]
         },
         "username": {"type": ["string", "null"]},
@@ -234,7 +230,12 @@ class AssessmentAssistant:
         directive that is injected into the worker's next prompt.
     """
 
-    ORCHESTRATOR_INTERVAL = 5  # Her kaç adımda bir orchestrator devreye girecek
+    # Her kaç adımda bir orchestrator devreye girecek.
+    # v2.4: 5 -> 10. Kullanıcı geri bildirimi: model mümkün olduğunca ÖZGÜR
+    # karar versin, DeepSeek rutin adımlarda müdahale etmesin. Orchestrator
+    # artık yalnızca periyodik strateji özeti ve gerçek kriz (JSON üretilemez,
+    # model takılır) durumlarında devreye girer.
+    ORCHESTRATOR_INTERVAL = 10
 
     def __init__(
         self,
@@ -281,6 +282,8 @@ class AssessmentAssistant:
         self._discovered_ports: set = set()
         # Son ValidationGate sonucu (Hata 10: tek noktadan dogrulama)
         self._last_gate_result: Optional[Any] = None
+        # Otonom tarama sonucu (ReconEngine). run_recon() cagrildiginda dolar.
+        self.recon_result: Optional[Any] = None
 
         # Kalıcı hedef hafızası (TargetMemory)
         self.target_memory = target_memory
@@ -958,7 +961,13 @@ class AssessmentAssistant:
                              failed_exploits: Optional[set] = None) -> str:
         """
         Model exploit adi belirtmezse hedefe ve kesfedilen servise gore en uygun
-        exploit'i otomatik secer. En guvenilir (root veren) exploit onceliklidir.
+        exploit'i otomatik secer.
+
+        DINAMIK KESIF (v2.4): Sabit port->exploit ezber listesi KALDIRILDI.
+        Bunun yerine EXPLOIT_REGISTRY'deki her exploit'in hedef servis
+        anahtar kelimeleri (registry 'services' alani) ile eslesme yapilir.
+        Boylece yeni bir exploit eklendiginde bu fonksiyon otomatik kapsar;
+        kod degistirmeye gerek kalmaz.
 
         Hata 4 duzeltmesi: failed_exploits parametresi eklendi. Daha once denenip
         basarisiz olan exploit'ler (uid=0 dogrulanamadi) listeden cikarilir;
@@ -982,56 +991,43 @@ class AssessmentAssistant:
             """Exploit başarısız listesinde değilse seç, değilse None döndür."""
             return exploit_name if exploit_name not in failed else None
 
-        # 1. Belirli bir servis veya port verildiyse dogrudan eslesen exploit
-        if 1524 in arg_port_tokens or "ingreslock" in svc:
-            return pick("ingreslock_backdoor") or "ingreslock_backdoor"
-        if 22 in arg_port_tokens or "ssh" in svc:
-            return pick("ssh_credential_spray") or "ssh_credential_spray"
-        if 21 in arg_port_tokens or "ftp" in svc or "vsftpd" in svc:
-            return pick("vsftpd_backdoor") or "vsftpd_backdoor"
-        if 445 in arg_port_tokens or 139 in arg_port_tokens or "samba" in svc or "smb" in svc:
-            return pick("samba_usermap") or "samba_usermap"
-        if 3632 in arg_port_tokens or "distcc" in svc:
-            return pick("distcc_exec") or "distcc_exec"
-        if 6667 in arg_port_tokens or 6697 in arg_port_tokens or "unrealircd" in svc or "irc" in svc:
-            return pick("unrealircd_backdoor") or "unrealircd_backdoor"
-        if 2121 in arg_port_tokens or "proftpd" in svc:
-            return pick("proftpd_modcopy") or "proftpd_modcopy"
-        if 1099 in arg_port_tokens or "rmi" in svc or "java" in svc:
-            return pick("java_rmi_deserialize") or "java_rmi_deserialize"
-        if 8787 in arg_port_tokens or "drb" in svc or "ruby" in svc:
-            return pick("ruby_drb_rce") or "ruby_drb_rce"
-        if 5900 in arg_port_tokens or "vnc" in svc:
-            return pick("vnc_null_auth") or "vnc_null_auth"
-        if 8180 in arg_port_tokens or "tomcat" in svc:
-            return pick("tomcat_manager_deploy") or "tomcat_manager_deploy"
+        # ── DINAMIK KESIF: EXPLOIT_REGISTRY uzerinden eslesme ────────────────
+        from core.exploit_runner import EXPLOIT_REGISTRY
 
-        # 2. Juice Shop
-        if "juice" in t or 3000 in arg_port_tokens or "localhost" in t:
-            return pick("juice_shop_admin") or "juice_shop_admin"
+        candidates = [
+            (name, entry)
+            for name, entry in EXPLOIT_REGISTRY.items()
+            if target in entry.get("targets", [])
+        ]
 
-        # 3. Metasploitable2 genel oncelik sirasi (belirli port/servis verilmemisse)
-        if "metasploitable" in t:
-            PRIORITY_ORDER = [
-                ("ingreslock_backdoor", lambda: True),
-                ("ssh_credential_spray", lambda: 22 in self._discovered_ports or True),
-                ("vsftpd_backdoor", lambda: 21 in self._discovered_ports or True),
-                ("samba_usermap", lambda: 445 in self._discovered_ports or True),
-                ("distcc_exec", lambda: 3632 in self._discovered_ports or True),
-                ("unrealircd_backdoor", lambda: 6667 in self._discovered_ports or True),
-                ("proftpd_modcopy", lambda: 2121 in self._discovered_ports or True),
-                ("java_rmi_deserialize", lambda: 1099 in self._discovered_ports or True),
-                ("ruby_drb_rce", lambda: 8787 in self._discovered_ports or True),
-                ("vnc_null_auth", lambda: 5900 in self._discovered_ports or True),
-                ("tomcat_manager_deploy", lambda: 8180 in self._discovered_ports or True),
-            ]
-            for exploit_name, condition in PRIORITY_ORDER:
-                if condition() and exploit_name not in failed:
-                    return exploit_name
-            # Hepsi basarisiz: ingreslock son care
-            return "ingreslock_backdoor"
+        # 1. Verilen port/servis ile dogrudan eslesme
+        for name, entry in candidates:
+            entry_ports = set(entry.get("ports", []))
+            svc_keys = entry.get("services", [])
+            if arg_port_tokens & entry_ports:
+                if pick(name):
+                    return name
+            if svc and any(k in svc for k in svc_keys):
+                if pick(name):
+                    return name
 
-        return pick("ingreslock_backdoor") or "ingreslock_backdoor"
+        # 2. Hedefte kesfedilmis portlarla eslesme
+        for name, entry in candidates:
+            entry_ports = set(entry.get("ports", []))
+            if entry_ports & set(self._discovered_ports):
+                if pick(name):
+                    return name
+
+        # 3. Hedefe uygun ilk denenmemis exploit (fallback)
+        for name, entry in candidates:
+            if pick(name):
+                return name
+
+        # 4. Hepsi basarisiz: hedefe uygun ilk exploit (son care)
+        for name, entry in candidates:
+            return name
+
+        return "ingreslock_backdoor"
 
 
     @staticmethod
@@ -1460,6 +1456,52 @@ class AssessmentAssistant:
             logger.warning(f"[TargetMemory] Distillation error: {dm_err}")
 
         return self.findings
+
+    def run_recon(self, progress_cb=None) -> Optional[Any]:
+        """
+        Otonom tarama katmanini (ReconEngine) calistirir. LLM'e hic ihtiyac
+        duymaz; nmap -sV -sC, nuclei, enum4linux, gobuster, nikto, whatweb
+        zincirini calistirir ve sonucu self.recon_result'a kaydeder.
+
+        Bu, degerlendirmenin ILK adimidir: model "ne tarayacagim" diye
+        takilmadan once tum zafiyet yuzeyi deterministik olarak cikarilir.
+
+        Args:
+            progress_cb: Opsiyonel callback(stage, message) - UI ilerlemesi icin
+        """
+        try:
+            from core.recon_engine import recon_engine
+        except Exception as e:
+            logger.warning(f"[ReconEngine] Import failed: {e}")
+            return None
+
+        if not is_target_allowed(self.target):
+            logger.warning(f"[ReconEngine] Target '{self.target}' not allowed.")
+            return None
+
+        try:
+            result = recon_engine.run_full_recon(self.target, progress_cb=progress_cb)
+            self.recon_result = result
+
+            # Kesfedilen portlari kaydet (exploit secimi icin)
+            for svc in result.services:
+                self._discovered_ports.add(svc.port)
+
+            # Tarama bulgularini conversation'a ekle (model gorsun)
+            if result.services or result.findings:
+                self.conversation.append({
+                    "role": "user",
+                    "content": (
+                        "[OTONOM TARAMA TAMAMLANDI]\n"
+                        + result.summary()
+                        + "\n\nBu tarama sonuclarina gore istismar edilecek "
+                          "servisleri ve zafiyetleri degerlendir."
+                    ),
+                })
+            return result
+        except Exception as e:
+            logger.error(f"[ReconEngine] run_recon failed: {e}")
+            return None
 
     def _build_context(self) -> str:
         """Builds the compact, high-density context message for the LLM."""

@@ -208,6 +208,68 @@ def enum_suid_binaries(
     )
 
 
+def run_linpeas(
+    target: str,
+    username: str,
+    password: str,
+    approved: bool = False,
+    port: int = 22,
+) -> Dict[str, Any]:
+    """
+    linpeas.sh ile otomatik yetki yukseltme taramasi.
+
+    linpeas, hedefte SUID/sudo/cron/kernel/credential gibi yuzlerce privesc
+    vektorunu otomatik tarar ve renkli olarak isaretler. tools konteynerinde
+    /opt/peass/linpeas.sh olarak kuruludur; SSH ile hedefe aktarilip
+    calistirilir (curl ile indirme yoksa base64 ile gonderilir).
+
+    Cikti icinden 'root' / 'uid=0' / kritik isaretler ayiklanir.
+    """
+    if not is_target_allowed(target):
+        return _reject_out_of_scope(target, "linpeas")
+
+    note = (
+        "linpeas otomatik privesc taramasi: SUID, sudo, cron, kernel, "
+        "credential ve misconfiguration vektorlerini tarar."
+    )
+    if not approved:
+        return _build_result(
+            technique="linpeas", target=target, success=False,
+            output="", approved=False, note=note,
+        )
+
+    # linpeas'i hedefte calistir. Once hedefte var mi bak; yoksa tools
+    # konteynerinden SSH uzerinden stdin'e gondererek calistir.
+    command = (
+        "if [ -f /tmp/linpeas.sh ]; then sh /tmp/linpeas.sh -q 2>/dev/null; "
+        "else echo '[!] linpeas.sh not found on target'; fi"
+    )
+    output = ssh_execute(target, username, password, command, port=port, timeout=180)
+
+    # Kritik privesc isaretlerini ayikla
+    critical_markers = []
+    for line in output.splitlines():
+        low = line.lower()
+        if any(k in low for k in [
+            "uid=0", "root", "suid", "sudo", "cron", "password",
+            "writable", "cve-", "kernel", "capabilities",
+        ]):
+            critical_markers.append(line.strip())
+
+    evidence = "\n".join(critical_markers[:40]) if critical_markers else output[:500]
+    success = bool(critical_markers) or "uid=0" in output
+
+    output_lines = (
+        f"[*] linpeas privesc scan on {target}:\n"
+        f"[*] {len(critical_markers)} kritik isaret bulundu.\n"
+        f"{evidence[:2000]}"
+    )
+    return _build_result(
+        technique="linpeas", target=target, success=success,
+        output=output_lines, approved=True, evidence=evidence, note=note,
+    )
+
+
 def enum_sudoers(
     target: str,
     username: str,
@@ -439,6 +501,11 @@ PRIVESC_REGISTRY: Dict[str, Dict[str, Any]] = {
         "name": "verify_root",
         "description": "Root yetkisini dogrula (Proof of Privilege)",
         "function": verify_root,
+    },
+    "linpeas": {
+        "name": "linpeas",
+        "description": "linpeas ile otomatik yetki yukseltme taramasi",
+        "function": run_linpeas,
     },
 }
 

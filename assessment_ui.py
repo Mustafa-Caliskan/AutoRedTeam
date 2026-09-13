@@ -1164,6 +1164,49 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
             auto_approve_findings=True
         )
 
+        # ── OTONOM TARAMA KATMANI (LLM'siz) ─────────────────────────────────
+        # Değerlendirmenin ilk adımı: model "ne tarayacağım" diye takılmadan
+        # önce tüm zafiyet yüzeyi deterministik olarak çıkarılır.
+        self.send_sse({
+            "type": "thinking_status",
+            "step": 0,
+            "message": "🔍 Otonom tarama başlatılıyor (nmap -sV -sC, nuclei, enum4linux, gobuster, nikto)..."
+        })
+
+        def _recon_progress(stage, msg):
+            self.send_sse({
+                "type": "orchestrator_directive",
+                "step": 0,
+                "directive": f"🔍 [Otonom Tarama/{stage}] {msg}"
+            })
+
+        try:
+            recon = assistant.run_recon(progress_cb=_recon_progress)
+            if recon and recon.services:
+                self.send_sse({
+                    "type": "orchestrator_directive",
+                    "step": 0,
+                    "directive": (
+                        f"✅ Otonom tarama tamamlandı: {len(recon.services)} açık port, "
+                        f"{len(recon.findings)} zafiyet işareti, "
+                        f"{len(recon.web_paths)} web dizini, "
+                        f"{len(recon.smb_shares)} SMB paylaşımı."
+                    )
+                })
+                # Tarama bulgularını UI'a gönder
+                for rf in recon.findings[:30]:
+                    self.send_sse({
+                        "type": "finding",
+                        "finding_id": "RECON",
+                        "category": rf.title[:120],
+                        "severity": rf.severity,
+                        "cwe_reference": rf.cve or "CWE-937",
+                        "evidence_snippet": rf.evidence[:300],
+                        "tool": rf.source
+                    })
+        except Exception as recon_err:
+            print(f"[UI] Recon engine error: {recon_err}")
+
         # Run assessment loop and stream events
         step = 0
         # Ardışık ilerlemesiz adım sayacı (sonsuz döngü koruması).
