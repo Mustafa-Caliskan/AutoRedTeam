@@ -1,8 +1,8 @@
 # AutoRedTeam — Proje Kapsamı, Mevcut Durum ve Yol Haritası
 
-> **Son Güncelleme:** 2026-09-13
-> **Sürüm:** v2.4 (Otonom Tarama Katmanı + Dinamik Exploit Keşfi)
-> **Durum:** Aktif geliştirme — Faz 1 (Altyapı Pentest) çalışıyor, otonom tarama katmanı eklendi
+> **Son Güncelleme:** 2026-09-13 (gece)
+> **Sürüm:** v2.5 (Otonom Tarama + Web Uygulama Kapsamı + Dinamik Exploit Keşfi)
+> **Durum:** Aktif geliştirme — Faz 1 (Altyapı Pentest) çalışıyor; kapsam tam, istismar derinliği artırılıyor
 
 ---
 
@@ -137,6 +137,16 @@ KATMAN 2: LLM YORUMLAMA (agentic)
 5. **linpeas entegrasyonu** — Otomatik post-exploitation privesc taraması
 6. **Yeni araçlar** — hydra, ffuf, enum4linux, smbclient, linpeas
 
+### v2.5 Değişiklikleri (Web Uygulama Kapsamı)
+1. **Web uygulamaları eklendi** — dvwa, mutillidae, phpmyadmin, tikiwiki,
+   webdav artık `_CRITICAL_SERVICES`'te ve ayrı ayrı test ediliyor
+2. **Paylaşılan port çakışması çözüldü** — "apache test edildi" denince
+   port 80'deki diğer uygulamalar artık "test edildi" sayılmıyor
+3. **Geniş port taraması filtresi** — tek bir `nmap 1-10000` tüm servisleri
+   "test edildi" gösteremiyor (10+ port = keşif, test değil)
+4. **`_credentials` bug'ı düzeltildi** — fallback yolundaki `AttributeError`
+5. **Foothold kimlik takibi** — başarılı exploit sonrası privesc için kayıt
+
 ### Recon Engine Gerçek Test Sonucu (metasploitable2)
 ```
 22 acik port
@@ -167,6 +177,28 @@ KATMAN 2: LLM YORUMLAMA (agentic)
 - **Sonuç:** 6 bulgu (2 gerçek kritik: SSH zayıf kimlik, ingreslock root shell).
 - **Kalan sorun:** Exploit'lerin çoğu hedefte başarısız; web uygulamaları (DVWA, Mutillidae, phpMyAdmin, TikiWiki, WebDAV) hiç test edilmedi.
 
+### Test 4 (v2.5, 33 adım) — EN KAPSAMLI TEST (son test)
+- **Tarih:** 2026-09-13 gece
+- **Model:** CyberStrike 35B (Colab tüneli)
+- **Akış:** Model 12 adım `searchsploit` tekrarına takıldı → deterministik moda geçti → 33 adımda tüm servisler test edildi.
+- **Kapsam:** 28 servis (web uygulamaları dahil) test edildi.
+- **Bulgu sayısı:** 6
+  - FIND-001: Weak Default Credentials (Critical) — SSH msfadmin:msfadmin
+  - FIND-002: Backdoor Exploitation (Critical) — ingreslock root shell (uid=0)
+  - FIND-003: Old Software Version (Informational) — PHP 5.2.4
+  - FIND-004: Privilege Escalation (Critical) — verify_root (uid=0)
+  - FIND-005: Privilege Escalation (Critical) — sudoers (ALL) ALL
+  - FIND-006: Privilege Escalation (Critical) — SUID enumeration
+- **İyi haber:** Web uygulamaları artık test ediliyor (nikto dvwa/mutillidae, searchsploit phpmyadmin/tikiwiki/webdav).
+- **Kalan sorun:** Exploit'lerin çoğu hedefte başarısız (aşağıda detaylı).
+
+### Test 4'te Yaşanan Sorunlar
+1. **Model hâlâ takılıyor:** 12 adım boyunca `searchsploit` tekrarladı (farklı servisler için olsa da). Deterministik mod devreye girdi.
+2. **Exploit başarı oranı düşük:** 11 exploit'ten sadece 2'si gerçekten çalıştı (ssh_credential_spray, ingreslock_backdoor).
+3. **Web uygulamaları sadece yüzeysel tarandı:** nikto/searchsploit ile lookup yapıldı ama DVWA SQLi, WebDAV PUT gibi gerçek istismar denenmedi.
+4. **Tomcat default creds bulundu ama exploit edilemedi:** Recon "tomcat:tomcat" buldu ama `tomcat_manager_deploy` başarısız oldu (port 8180 kapalı çıktı).
+5. **Bulgu tekrarı:** 3 adet "Privilege Escalation" bulgusu ayrı ayrı kaydedildi (verify_root, sudoers, suid) — bunlar tek bir privesc zinciri olarak birleştirilmeli.
+
 ### Tespit Edilen Kök Sorunlar
 
 | # | Sorun | Durum |
@@ -174,15 +206,72 @@ KATMAN 2: LLM YORUMLAMA (agentic)
 | 1 | `no_progress_count` çok agresif erken bitiriyordu | ✅ Düzeltildi (eşik 5→12, deterministik fallback önceliği) |
 | 2 | SGLang constrained decoding çalışmıyordu | ✅ Düzeltildi (`guided_json` + kademeli fallback) |
 | 3 | `sanitize_llm_response` JSON'u bozuyordu | ✅ Düzeltildi (JSON koruması) |
-| 4 | `_CRITICAL_SERVICES` eksikti (13 servis) | ✅ Genişletildi (23 servis) |
+| 4 | `_CRITICAL_SERVICES` eksikti (13 servis) | ✅ Genişletildi (28 servis, web uygulamaları dahil) |
 | 5 | Eksik exploit scriptleri | ✅ 5 yeni script eklendi |
 | 6 | searchsploit lookup'ları bulgu sayılıyordu | ✅ Düzeltildi (istihbarat filtresi) |
 | 7 | Model takılması | ✅ Deterministik kapsam motoru eklendi |
 | 8 | Yanlış pozitif exploit başarısı (distcc/unrealircd) | ✅ Düzeltildi (sadece `uid=` kanıtı) |
-| 9 | **Web uygulamaları test edilmiyor** | ❌ Açık — çözüm önerisi aşağıda |
-| 10 | **MySQL/PostgreSQL exploit yok** | ❌ Açık |
-| 11 | **Claude model adı geçersiz** (`claude-5-sonnet` 404) | ❌ Açık |
-| 12 | **Exploit başarı oranı düşük** | ❌ Açık |
+| 9 | Web uygulamaları test edilmiyordu | ✅ Düzeltildi (v2.5: 5 web uygulaması eklendi) |
+| 10 | Paylaşılan port çakışması (port 80) | ✅ Düzeltildi (keyword eşleşmesi zorunlu) |
+| 11 | Geniş nmap taraması tüm servisleri "test edildi" gösteriyordu | ✅ Düzeltildi (10+ port = keşif) |
+| 12 | `_credentials` AttributeError | ✅ Düzeltildi |
+| 13 | **MySQL/PostgreSQL gerçek istismar yok** | ❌ Açık |
+| 14 | **Claude model adı geçersiz** (`claude-5-sonnet` 404) | ❌ Açık |
+| 15 | **Exploit başarı oranı düşük** (11'den 2'si çalışıyor) | ❌ Açık |
+| 16 | **Web uygulamaları yüzeysel taranıyor** (SQLi/XSS/upload denenmiyor) | ❌ Açık |
+| 17 | **Privesc bulguları tekrar ediyor** (3 ayrı bulgu) | ❌ Açık |
+
+---
+
+## 4.5. Amaca Ne Kadar Kaldı?
+
+### Hedef
+Gerçek sistemleri otonom pentest edip **TÜM zafiyetleri** tespit eden, doğrulayan
+ve raporlayan bir sistem. Bug bounty'de de kullanılabilir olmalı.
+
+### Mevcut Durum: ~%65
+
+| Yetenek | Durum | Not |
+|---|---|---|
+| Port/servis keşfi | ✅ %100 | nmap -sV -sC, 22 port doğru bulundu |
+| Zafiyet yüzeyi taraması | ✅ %90 | nikto, enum4linux, gobuster, whatweb çalışıyor |
+| Web dizin keşfi | ✅ %100 | 22 dizin bulundu |
+| SMB numaralandırma | ✅ %100 | 5 paylaşım, tmp yazılabilir |
+| Kapsam tamlığı | ✅ %100 | 28 servis test ediliyor (web dahil) |
+| Kimlik bilgisi istismarı | ✅ %80 | SSH spray çalışıyor |
+| Backdoor istismarı | ✅ %60 | ingreslock çalışıyor, diğerleri hedefte yok |
+| Web uygulama istismarı | ⚠️ %20 | Sadece yüzeysel tarama; SQLi/XSS/upload yok |
+| Yetki yükseltme | ✅ %70 | SUID/sudoers/verify_root çalışıyor |
+| Otonom karar (LLM) | ⚠️ %50 | Model hâlâ takılıyor, deterministik mod kurtarıyor |
+| Rapor kalitesi | ✅ %80 | PDF/Markdown, exploit zincirleri |
+| Gerçek dünya hedefi | ⚠️ %30 | Sadece eğitim hedeflerinde test edildi |
+
+### Amaca Ulaşmak İçin Kalan İşler (öncelik sırasıyla)
+
+1. **Web uygulama istismarı** (en büyük eksik)
+   - DVWA: SQLi, XSS, command injection, file upload otomatik testi
+   - WebDAV: PUT metodu ile dosya yükleme
+   - phpMyAdmin: default creds + CVE istismarı
+   - `sqlmap` entegrasyonunu web formlarına yönlendir
+
+2. **Exploit başarı oranını artır**
+   - Samba usermap: gerçek SMB handshake doğrulaması
+   - distcc: doğru CVE-2004-2687 payload
+   - unrealircd: doğru backdoor tetikleme
+   - ruby_drb: geçerli marshal gadget
+
+3. **Model takılmasını azalt**
+   - Sistem promptunu kısalt
+   - Few-shot örnekler
+   - Daha güçlü model (DeepSeek/Claude) worker olarak
+
+4. **Bulgu kalitesi**
+   - Privesc bulgularını tek zincirde birleştir
+   - Başarısız denemeleri de raporla
+
+5. **Gerçek dünya testi**
+   - HackTheBox/TryHackMe makinelerinde dene
+   - Bug bounty programlarında (izinli) test
 
 ---
 
@@ -190,10 +279,11 @@ KATMAN 2: LLM YORUMLAMA (agentic)
 
 ### Yüksek Öncelik
 
-1. **Web uygulaması zafiyet taraması ekle**
-   - `_CRITICAL_SERVICES`'e web dizinlerini ekle: `/dvwa/`, `/mutillidae/`, `/phpMyAdmin/`, `/tikiwiki/`, `/twiki/`, `/dav/`
-   - Her dizin için özel kontroller: SQLi (DVWA), XSS, dosya yükleme, WebDAV PUT, phpMyAdmin default creds
-   - `sqlmap` ve `gobuster` entegrasyonunu web dizinlerine yönlendir
+1. **Web uygulaması istismarı ekle** (v2.5'te tarama eklendi, istismar eksik)
+   - DVWA için SQLi/XSS/command injection otomatik testi
+   - WebDAV PUT metodu ile dosya yükleme
+   - phpMyAdmin default creds + CVE istismarı
+   - `sqlmap` entegrasyonunu web formlarına yönlendir
 
 2. **MySQL/PostgreSQL istismarı ekle**
    - MySQL: `CVE-2012-2122` (auth bypass), UDF privesc
