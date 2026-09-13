@@ -1,8 +1,8 @@
 # AutoRedTeam — Proje Kapsamı, Mevcut Durum ve Yol Haritası
 
 > **Son Güncelleme:** 2026-09-13
-> **Sürüm:** v2.3 (Deterministik Kapsam Motoru + Genişletilmiş Exploit Kataloğu)
-> **Durum:** Aktif geliştirme — Faz 1 (Altyapı Pentest) çalışıyor, kapsam derinliği artırılıyor
+> **Sürüm:** v2.4 (Otonom Tarama Katmanı + Dinamik Exploit Keşfi)
+> **Durum:** Aktif geliştirme — Faz 1 (Altyapı Pentest) çalışıyor, otonom tarama katmanı eklendi
 
 ---
 
@@ -77,15 +77,16 @@ Aynı otonom değerlendirme yeteneğini **LLM tabanlı ajanlara** uygulamak.
 
 - **Web Kokpiti** (`assessment_ui.py`): Gerçek zamanlı SSE akışı, canlı bulgu/exploit zinciri görselleştirme
 - **CLI** (`main.py`): `--mode assessment` ile human-in-the-loop değerlendirme
-- **Exploit Runner** (`core/exploit_runner.py`): 12 kayıtlı exploit
-- **Privesc Engine** (`core/privesc_engine.py`): SUID, sudoers, GTFOBins, verify_root
+- **Otonom Tarama Motoru** (`core/recon_engine.py`): **[YENİ v2.4]** LLM'siz deterministik tarama zinciri (nmap -sV -sC, nuclei, enum4linux, gobuster, nikto, whatweb)
+- **Exploit Runner** (`core/exploit_runner.py`): 12 kayıtlı exploit, dinamik servis/port eşlemesi
+- **Privesc Engine** (`core/privesc_engine.py`): SUID, sudoers, GTFOBins, verify_root, **linpeas**
 - **Validation Gate** (`core/validation_gate.py`): 7-soru anti-hallucination filtresi
-- **Docker Laboratuvarı**: Metasploitable2 + Juice Shop + assessment-tools (nmap, nikto, gobuster, sqlmap, searchsploit, testssl)
+- **Docker Laboratuvarı**: Metasploitable2 + Juice Shop + assessment-tools (nmap, nikto, gobuster, sqlmap, searchsploit, testssl, hydra, ffuf, enum4linux, smbclient, linpeas)
 
 ### Test Durumu
 
 ```
-165 passed in ~48s
+172 passed in ~59s
 ```
 
 ### Exploit Kataloğu (12)
@@ -104,6 +105,50 @@ Aynı otonom değerlendirme yeteneğini **LLM tabanlı ajanlara** uygulamak.
 | `vnc_null_auth` | 5900 | ⚠️ Port kapalı |
 | `tomcat_manager_deploy` | 8180 | ⚠️ Port kapalı |
 | `juice_shop_admin` | 3000 | ✅ Çalışıyor (Juice Shop) |
+
+---
+
+## 3.5. v2.4 Mimari Devrimi — Otonom Tarama Katmanı
+
+### Problem
+Küçük worker modeli (CyberStrike 35B) "sıradaki tarama adımı ne?" kararında
+takılıp aynı eylemi tekrarlıyordu. Tarama işi aslında **deterministik** olduğu
+halde LLM'e yaptırılıyordu.
+
+### Çözüm: Tool-First, LLM-Second
+```
+KATMAN 1: OTONOM TARAMA (LLM'siz, deterministik) — core/recon_engine.py
+  nmap -sV -sC -> nuclei -> enum4linux -> gobuster -> nikto -> whatweb
+  => Tum zafiyet yuzeyi cikarilir (22 port, 17 isaret, 22 dizin)
+                          |
+                          v yapilandirilmis bulgular
+KATMAN 2: LLM YORUMLAMA (agentic)
+  Model artik "ne tarayacagim" demez; bulunan zafiyetleri onceliklendirir
+  ve istismar eder. Bilmedigi servisleri searchsploit/cve_search/web_search
+  ile DINAMIK olarak arastirir (ezber yok).
+```
+
+### v2.4 Değişiklikleri
+1. **`core/recon_engine.py`** — LLM'siz otonom tarama zinciri
+2. **Dinamik exploit keşfi** — Sabit port→exploit ezber listesi kaldırıldı;
+   `EXPLOIT_REGISTRY` artık `services`/`ports` metadata taşıyor
+3. **Ezber sistem promptu kaldırıldı** — Model bilmediğini araştırmaya yönlendiriliyor
+4. **Orchestrator müdahalesi azaltıldı** — `ORCHESTRATOR_INTERVAL` 5→10
+5. **linpeas entegrasyonu** — Otomatik post-exploitation privesc taraması
+6. **Yeni araçlar** — hydra, ffuf, enum4linux, smbclient, linpeas
+
+### Recon Engine Gerçek Test Sonucu (metasploitable2)
+```
+22 acik port
+22 web dizini (phpMyAdmin, dav, twiki, test, admin, WEB-INF...)
+5 SMB paylasimi (tmp yazilabilir!)
+17 zafiyet isareti:
+  - Tomcat default creds (tomcat:tomcat) <- kritik
+  - phpMyAdmin acikta
+  - Apache 2.2.8 / PHP 5.2.4 outdated
+  - HTTP TRACE aktif (XST)
+  - mod_negotiation MultiViews
+```
 
 ---
 
