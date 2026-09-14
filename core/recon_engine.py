@@ -279,22 +279,31 @@ class ReconEngine:
     # ── 4. Web Dizin Kesfi ──────────────────────────────────────────────────
 
     def scan_web_dirs(self, target: str, port: int = 80) -> List[str]:
-        """gobuster ile web dizin/dosya kesfi."""
+        """gobuster ile web dizin/dosya kesfi (iki wordlist: common + metasploitable)."""
         host = resolve_host(target)
         url = f"http://{host}:{port}"
-        cmd = (
-            f"gobuster dir -u {url} -w /usr/share/wordlists/dirb/common.txt "
-            f"-t 30 -q --timeout 5s -k"
-        )
-        out = run_command(cmd, timeout=self.timeout_web)
         paths: List[str] = []
-        for line in out.splitlines():
-            # gobuster cikti formati: "phpMyAdmin           (Status: 301) [Size: 328]"
-            m = re.match(r"^(\S+)\s+\(Status:\s*(\d+)\)", line.strip())
-            if m:
-                status = int(m.group(2))
-                if status in (200, 301, 302, 401, 403):
-                    paths.append(m.group(1))
+
+        # Iki wordlist: genel (common.txt) + egitim hedefleri (metasploitable.txt)
+        wordlists = [
+            "/usr/share/wordlists/dirb/common.txt",
+            "/opt/art/wordlists/metasploitable.txt",
+        ]
+        for wl in wordlists:
+            cmd = (
+                f"gobuster dir -u {url} -w {wl} "
+                f"-t 30 -q --timeout 5s -k"
+            )
+            out = run_command(cmd, timeout=self.timeout_web)
+            for line in out.splitlines():
+                # gobuster cikti formati: "phpMyAdmin           (Status: 301) [Size: 328]"
+                m = re.match(r"^(\S+)\s+\(Status:\s*(\d+)\)", line.strip())
+                if m:
+                    status = int(m.group(2))
+                    if status in (200, 301, 302, 401, 403):
+                        p = m.group(1)
+                        if p not in paths:
+                            paths.append(p)
         return paths
 
     # ── 5. Nikto Web Zafiyet Taramasi ───────────────────────────────────────

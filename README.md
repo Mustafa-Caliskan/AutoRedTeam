@@ -6,6 +6,115 @@ AutoRedTeam bridges the gap between adversarial AI safety and traditional offens
 
 ---
 
+## 🆕 v3.0 / v3.1 — Deterministic Core + Autonomous AI Agent
+
+> **Latest milestone:** The platform evolved from an LLM-dependent scanner into a
+> **deterministic exploitation engine** with an **autonomous AI agent** on top.
+
+### What Changed
+
+| Version | Feature | Impact |
+|---|---|---|
+| **v3.0** | Deterministic core (`vuln_mapper`, `exploit_planner`, `verifier`, `state_machine`) | LLM-free, reliable exploitation |
+| **v3.0** | Web exploit engine (DVWA, Mutillidae, phpMyAdmin, WebDAV) | +4 web vulnerabilities |
+| **v3.1** | Autonomous AI agent (OODA loop) | AI selects & runs tools itself |
+| **v3.1** | Credential engine + post-exploitation | Root → credential dump |
+
+### Architecture: Deterministic Core + LLM Advisor
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  DETERMINISTIC CORE (no LLM)                                        │
+│  Recon → VulnMapper → ExploitPlanner → Exploit → Web → Privesc      │
+│  → Verifier → StateMachine → Correlator → CVSS → Report             │
+├─────────────────────────────────────────────────────────────────────┤
+│  LLM ADVISOR (only when needed)                                     │
+│  CyberStrike 35B → Payload Crafter                                  │
+│  DeepSeek V4 Flash → Triage Advisor                                 │
+│  Claude → Escalation Oracle                                         │
+├─────────────────────────────────────────────────────────────────────┤
+│  AUTONOMOUS AI AGENT (OODA loop)                                    │
+│  OBSERVE → ORIENT → DECIDE → ACT → (feedback)                       │
+│  AI selects tools, runs them, sees results, escalates privileges    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Current Capability (Metasploitable2)
+
+**12 vulnerabilities detected** (out of ~28):
+
+| Category | Findings |
+|---|---|
+| Weak Default Credentials | SSH (msfadmin), phpMyAdmin (root:"") |
+| Backdoor Exploitation | Ingreslock root shell |
+| SQL Injection | DVWA, Mutillidae |
+| Command Injection | DVWA |
+| Cross-Site Scripting | DVWA |
+| Local File Inclusion | Mutillidae, WebDAV |
+| File Upload | WebDAV |
+| Privilege Escalation | SUID/sudo → root |
+
+### Four Operating Modes (Web UI)
+
+| Mode | LLM Required | Description |
+|---|---|---|
+| **▶ Start** | Yes | Classic LLM-driven assessment |
+| **🧭 Deterministic** | No | LLM-free full scan (works offline) |
+| **🧠 Deterministic + AI** | Yes | Deterministic core + AI advisor |
+| **🤖 Autonomous AI** | Yes | AI selects & runs tools itself |
+
+### Autonomous AI Agent (v3.1)
+
+The agent runs an **OODA loop** where the AI model decides the next action:
+
+```
+Step 1: credential_spray(ssh) → "I have credentials, use them" → uid=1000
+Step 2: exploit(ssh_credential_spray) → foothold obtained
+Step 3: privesc(sudoers_audit) → (ALL) ALL
+Step 4: privesc(sudo_privesc) → uid=0(root) ✅
+Step 5: post_exploit(cat /etc/shadow) → credentials dumped
+```
+
+**Safety:** scope allow-list, dangerous-command filter, max-step limit,
+stuck detection, full audit log.
+
+### Test Suite
+
+```
+270 passed in ~50s
+```
+
+### New Modules (v3.0/v3.1)
+
+```
+core/vuln_mapper.py          # service → CVE → exploit mapping
+core/exploit_planner.py      # deterministic exploitation planner
+core/verifier.py             # evidence-based verification
+core/state_machine.py        # pentest phase transitions
+core/credential_engine.py    # default creds + reuse + brute
+core/web_exploit_engine.py   # DVWA/Mutillidae/phpMyAdmin/WebDAV
+core/post_exploit.py         # foothold → privesc → credential dump
+core/finding_correlator.py   # dedup + attack chains
+core/cvss_scorer.py          # CVSS v3.1 scoring
+core/llm_advisor.py          # Payload Crafter / Triage / Escalation
+core/autonomous_agent.py     # OODA autonomous agent
+```
+
+### Roadmap
+
+See [`METASPLOITABLE2_TAM_KAPSAMA_PLANI.md`](METASPLOITABLE2_TAM_KAPSAMA_PLANI.md)
+for the full coverage plan (target: 22/28 vulnerabilities).
+
+---
+
+## ⚠️ Ethical Use
+
+This tool is for **authorized security testing only**. See
+[`DISCLAIMER.md`](DISCLAIMER.md) for legal terms. Built-in safeguards include
+scope allow-listing, human-in-the-loop approval, and dangerous-command filtering.
+
+---
+
 ## Strategic Architecture
 
 The framework operates via two complementary offensive security engines powered by a unified model orchestration pipeline:

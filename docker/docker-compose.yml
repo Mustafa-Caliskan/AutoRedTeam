@@ -49,6 +49,7 @@ services:
     # build etmeye gerek kalmaz; degisiklik aninda konteynere yansir.
     volumes:
       - ../scripts/exploits:/opt/art/exploits:ro
+      - ./wordlists:/opt/art/wordlists:ro
     networks:
       - assessment-net
 

@@ -30,6 +30,16 @@ if sys.platform == "win32":
 
 # Load environment variables
 def load_env():
+    # Once python-dotenv varsa onu kullan (dogru parse + override)
+    try:
+        from dotenv import load_dotenv
+        for env_path in [Path(".env"), Path("config/.env")]:
+            if env_path.exists():
+                load_dotenv(env_path, override=True)
+                return
+    except ImportError:
+        pass
+    # Fallback: manuel parse (override=True davranisi)
     for env_path in [Path(".env"), Path("config/.env")]:
         if env_path.exists():
             with open(env_path, encoding="utf-8") as f:
@@ -37,7 +47,7 @@ def load_env():
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
                         key, _, val = line.partition("=")
-                        os.environ.setdefault(key.strip(), val.strip())
+                        os.environ[key.strip()] = val.strip()
             break
 
 load_env()
@@ -181,6 +191,15 @@ HTML_PAGE = """<!DOCTYPE html>
             </label>
             <button id="btn-start" onclick="startAssessment()" class="bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-white font-semibold px-4 py-1.5 rounded-lg shadow-lg glow-red transition flex items-center gap-1.5 text-xs">
                 <span>▶</span> Başlat
+            </button>
+            <button id="btn-deterministic" onclick="startDeterministic()" class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-4 py-1.5 rounded-lg shadow-lg transition flex items-center gap-1.5 text-xs" title="LLM'siz deterministik mod (Colab kapalıyken de çalışır)">
+                <span>🧭</span> Deterministik
+            </button>
+            <button id="btn-deterministic-ai" onclick="startDeterministicAI()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold px-4 py-1.5 rounded-lg shadow-lg transition flex items-center gap-1.5 text-xs" title="Deterministik çekirdek + AI derinleştirme (model gerekir)">
+                <span>🧠</span> Deterministik + AI
+            </button>
+            <button id="btn-autonomous" onclick="startAutonomous()" class="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 text-white font-semibold px-4 py-1.5 rounded-lg shadow-lg transition flex items-center gap-1.5 text-xs" title="Otonom AI ajanı: AI tool'ları kendi kullanır (model gerekir)">
+                <span>🤖</span> Otonom AI
             </button>
             <button id="btn-stop" onclick="stopAssessment()" disabled class="bg-[#1c1e26] text-gray-400 hover:text-gray-200 px-3.5 py-1.5 rounded-lg border border-[#2a2e3b] transition disabled:opacity-40 text-xs">
                 ⏹ Durdur
@@ -564,6 +583,83 @@ HTML_PAGE = """<!DOCTYPE html>
             document.getElementById('status-text').innerText = 'Değerlendirme kullanıcı tarafından durduruldu.';
         }
 
+        function startDeterministic() {
+            runDeterministicMode('deterministic');
+        }
+
+        function startDeterministicAI() {
+            runDeterministicMode('deterministic_ai');
+        }
+
+        function startAutonomous() {
+            runDeterministicMode('autonomous');
+        }
+
+        function runDeterministicMode(mode) {
+            const target = document.getElementById('target-select').value;
+            const maxSteps = document.getElementById('steps-select').value;
+            const useAI = (mode === 'deterministic_ai' || mode === 'autonomous');
+            const isAutonomous = (mode === 'autonomous');
+
+            document.getElementById('decision-feed').innerHTML = '';
+            document.getElementById('terminal-feed').innerHTML = '';
+            document.getElementById('findings-board').innerHTML = '';
+            document.getElementById('gate-events-feed').innerHTML = '';
+            document.getElementById('chains-container').innerHTML = '';
+            findingsList = [];
+
+            document.getElementById('btn-start').disabled = true;
+            document.getElementById('btn-start').classList.add('opacity-40');
+            document.getElementById('btn-deterministic').disabled = true;
+            document.getElementById('btn-deterministic').classList.add('opacity-40');
+            document.getElementById('btn-deterministic-ai').disabled = true;
+            document.getElementById('btn-deterministic-ai').classList.add('opacity-40');
+            document.getElementById('btn-autonomous').disabled = true;
+            document.getElementById('btn-autonomous').classList.add('opacity-40');
+            document.getElementById('btn-stop').disabled = false;
+            document.getElementById('status-dot').className = 'w-2 h-2 rounded-full bg-fuchsia-400 animate-pulse';
+            document.getElementById('status-text').innerText = isAutonomous
+                ? `Otonom AI ajanı çalışıyor: ${target}...`
+                : (useAI
+                    ? `Deterministik + AI değerlendirme: ${target}...`
+                    : `Deterministik değerlendirme (LLM'siz): ${target}...`);
+
+            eventSource = new EventSource(`/api/stream?target=${encodeURIComponent(target)}&max_steps=${maxSteps}&mode=${mode}`);
+
+            eventSource.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'finding') {
+                    renderFinding(data);
+                } else if (data.type === 'orchestrator_directive') {
+                    renderOrchestratorDirective(data);
+                } else if (data.type === 'chain') {
+                    renderChainUpdate(data);
+                } else if (data.type === 'thinking_status') {
+                    renderThinkingStatus(data);
+                } else if (data.type === 'error') {
+                    renderError(data);
+                } else if (data.type === 'complete') {
+                    finishAssessment(data);
+                }
+            };
+
+            eventSource.onerror = function(err) {
+                console.error("SSE Error:", err);
+                eventSource.close();
+                document.getElementById('btn-start').disabled = false;
+                document.getElementById('btn-start').classList.remove('opacity-40');
+                document.getElementById('btn-deterministic').disabled = false;
+                document.getElementById('btn-deterministic').classList.remove('opacity-40');
+                document.getElementById('btn-deterministic-ai').disabled = false;
+                document.getElementById('btn-deterministic-ai').classList.remove('opacity-40');
+                document.getElementById('btn-autonomous').disabled = false;
+                document.getElementById('btn-autonomous').classList.remove('opacity-40');
+                document.getElementById('btn-stop').disabled = true;
+                document.getElementById('status-dot').className = 'w-2 h-2 rounded-full bg-cyan-400';
+                document.getElementById('status-text').innerText = 'Deterministik değerlendirme tamamlandı.';
+            };
+        }
+
         function renderOrchestratorDirective(data) {
             const feed = document.getElementById('decision-feed');
             const card = document.createElement('div');
@@ -843,6 +939,12 @@ HTML_PAGE = """<!DOCTYPE html>
             }
             document.getElementById('btn-start').disabled = false;
             document.getElementById('btn-start').classList.remove('opacity-40');
+            document.getElementById('btn-deterministic').disabled = false;
+            document.getElementById('btn-deterministic').classList.remove('opacity-40');
+            document.getElementById('btn-deterministic-ai').disabled = false;
+            document.getElementById('btn-deterministic-ai').classList.remove('opacity-40');
+            document.getElementById('btn-autonomous').disabled = false;
+            document.getElementById('btn-autonomous').classList.remove('opacity-40');
             document.getElementById('btn-stop').disabled = true;
             document.getElementById('status-dot').className = 'w-2 h-2 rounded-full bg-cyan-400';
             document.getElementById('status-text').innerText = `Değerlendirme tamamlandı! ${data.findings_count} bulgu doğrulandı (${data.steps_run} adım).`;
@@ -1117,6 +1219,7 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
         max_steps = int(params.get("max_steps", ["16"])[0])
         autonomous = params.get("autonomous", ["true"])[0].lower() in ("true", "1")
         interactive = params.get("interactive", ["false"])[0].lower() in ("true", "1")
+        mode = params.get("mode", ["llm"])[0].lower()  # llm | deterministic
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -1130,6 +1233,18 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
             "type": "skills_matched",
             "skills": matched_skills[:5]
         })
+
+        # ── DETERMİNİSTİK MOD ───────────────────────────────────────────────
+        # mode=deterministic       -> LLM'siz (Colab kapalıyken de çalışır)
+        # mode=deterministic_ai    -> deterministik çekirdek + AI derinleştirme
+        # mode=autonomous          -> deterministik çekirdek + otonom AI ajanı
+        if mode in ("deterministic", "deterministic_ai", "autonomous"):
+            self._run_deterministic_mode(
+                target, max_steps,
+                use_llm=(mode in ("deterministic_ai", "autonomous")),
+                autonomous=(mode == "autonomous"),
+            )
+            return
 
         endpoint = os.environ.get("COLAB_ATTACKER_URL") or os.environ.get("RUNPOD_ATTACKER_URL")
         key = os.environ.get("COLAB_API_KEY", "EMPTY")
@@ -1836,6 +1951,103 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
             "findings_count": len(report_findings),
             "steps_run": step
         })
+
+    def _run_deterministic_mode(self, target: str, max_steps: int,
+                                use_llm: bool = False, autonomous: bool = False):
+        """
+        Deterministik değerlendirme modu (v3.0/v3.1).
+
+        Recon -> Vulnerability Mapping -> Exploit Planning -> Exploitation ->
+        Credential Reuse -> Web Exploitation -> Post-Exploitation ->
+        Korelasyon/CVSS -> Rapor -> (use_llm ise) AI Derinleştirme ->
+        (autonomous ise) Otonom AI Ajanı.
+
+        use_llm=False: tamamen LLM'siz (Colab kapalıyken de çalışır).
+        use_llm=True : deterministik çekirdek + AI danışman katmanı.
+        autonomous=True: AI tool'ları kendi kullanır (tam otonom).
+        """
+        if autonomous:
+            mode_label = "Otonom AI Ajanı"
+        elif use_llm:
+            mode_label = "Deterministik + AI"
+        else:
+            mode_label = "Deterministik (LLM'siz)"
+        self.send_sse({
+            "type": "thinking_status",
+            "step": 0,
+            "message": f"🧭 {mode_label} mod başlatılıyor..."
+        })
+
+        # LLM client (use_llm ise)
+        llm_client = None
+        if use_llm:
+            endpoint = os.environ.get("COLAB_ATTACKER_URL") or os.environ.get("RUNPOD_ATTACKER_URL")
+            key = os.environ.get("COLAB_API_KEY", "EMPTY")
+            if endpoint:
+                try:
+                    llm_client = create_llm_client(
+                        provider="colab",
+                        model_name="auto",
+                        endpoint_url=endpoint,
+                        api_key=key,
+                        auto_detect_model=True,
+                    )
+                    # LLM advisor'a worker client ata
+                    from core.llm_advisor import llm_advisor
+                    llm_advisor.worker_client = llm_client
+                    llm_advisor.orchestrator_client = llm_client
+                except Exception as e:
+                    print(f"[UI] LLM client oluşturulamadı: {e}")
+
+        assistant = AssessmentAssistant(
+            llm_client=llm_client,
+            target=target,
+            max_steps=max_steps,
+        )
+
+        def _progress(stage, msg):
+            self.send_sse({
+                "type": "orchestrator_directive",
+                "step": 0,
+                "directive": f"🧭 [{stage}] {msg}"
+            })
+
+        try:
+            findings = assistant.run_deterministic(progress_cb=_progress, use_llm=use_llm)
+
+            # Bulguları UI'a gönder
+            for f in findings:
+                self.send_sse({
+                    "type": "finding",
+                    "finding": f,
+                })
+
+            # Korelasyon zincirlerini gönder
+            correlated = getattr(assistant, "_correlated", None)
+            if correlated:
+                for chain in correlated.get("chains", []):
+                    self.send_sse({
+                        "type": "chain",
+                        "chain": chain,
+                    })
+
+            # Rapor üret (dosyadaki TÜM bulguları kapsar; hiçbiri kaybolmaz)
+            try:
+                assistant.generate_report()
+            except Exception as rep_err:
+                print(f"[UI] Rapor üretim hatası: {rep_err}")
+
+            self.send_sse({
+                "type": "complete",
+                "findings_count": len(findings),
+                "steps_run": getattr(assistant, "step_count", 0),
+                "mode": "deterministic",
+            })
+        except Exception as e:
+            self.send_sse({
+                "type": "error",
+                "message": f"Deterministik mod hatası: {e}"
+            })
 
     def log_message(self, format, *args):
         pass

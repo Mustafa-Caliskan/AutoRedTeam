@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_TARGETS_FILE = Path(__file__).parent.parent / "config" / "allowed_targets.txt"
 AUDIT_LOG_FILE = Path(__file__).parent.parent / "data" / "assessment_audit_log.jsonl"
+CONFIG_DIR = Path(__file__).parent.parent / "config"
 
 # Docker tools container name (see docker/docker-compose.yml)
 TOOLS_CONTAINER = os.environ.get("ASSESSMENT_TOOLS_CONTAINER", "autoredteam-assessment-tools")
@@ -61,10 +62,84 @@ def is_target_allowed(target: str) -> bool:
     """
     Hedefin config/allowed_targets.txt icinde olup olmadigini kod seviyesinde
     dogrular. Yalnizca acikca izin verilen hedefler True doner.
+
+    Ek olarak config/scope.yaml varsa dinamik scope (domain wildcard, IP range)
+    da kontrol edilir. Bu, bug bounty programlari icin kullanilir.
     """
-    allowed = load_allowed_targets()
     normalized = (target or "").strip().lower()
-    return normalized in allowed
+    allowed = load_allowed_targets()
+    if normalized in allowed:
+        return True
+    # Dinamik scope (varsa)
+    scope = load_scope_config()
+    if scope:
+        return is_target_in_scope(target, scope)
+    return False
+
+
+# ── Dinamik Scope (config/scope.yaml) ───────────────────────────────────────
+
+SCOPE_CONFIG_FILE = CONFIG_DIR / "scope.yaml"
+
+
+def load_scope_config() -> Optional[Dict[str, Any]]:
+    """
+    config/scope.yaml dosyasini yukler (varsa). PyYAML yoksa veya dosya yoksa
+    None doner (geriye uyumluluk korunur).
+    """
+    if not SCOPE_CONFIG_FILE.exists():
+        return None
+    try:
+        import yaml  # opsiyonel bagimlilik
+        with open(SCOPE_CONFIG_FILE, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except ImportError:
+        logger.debug("[Scope] PyYAML yok; scope.yaml atlaniyor.")
+        return None
+    except Exception as e:
+        logger.warning(f"[Scope] scope.yaml yuklenemedi: {e}")
+        return None
+
+
+def is_target_in_scope(target: str, scope: Dict[str, Any]) -> bool:
+    """
+    Domain/IP/wildcard scope kontrolu.
+
+    scope ornegi:
+      scope:
+        domains: ["*.example.com", "api.example.com"]
+        ips: ["10.0.0.0/24"]
+        excluded: ["admin.example.com"]
+    """
+    import fnmatch
+    import ipaddress
+
+    normalized = (target or "").strip().lower()
+    # Sema/port soy
+    host = normalized.split("://")[-1].split(":")[0]
+
+    scope_block = scope.get("scope", scope)
+
+    # Excluded kontrolu (once)
+    for ex in scope_block.get("excluded", []) or []:
+        if fnmatch.fnmatch(host, str(ex).lower()):
+            return False
+
+    # Domain kontrolu
+    for domain in scope_block.get("domains", []) or []:
+        if fnmatch.fnmatch(host, str(domain).lower()):
+            return True
+
+    # IP range kontrolu
+    try:
+        ip = ipaddress.ip_address(host)
+        for net in scope_block.get("ips", []) or []:
+            if ip in ipaddress.ip_network(str(net), strict=False):
+                return True
+    except ValueError:
+        pass
+
+    return False
 
 
 # ── Denetim Logu ────────────────────────────────────────────────────────────

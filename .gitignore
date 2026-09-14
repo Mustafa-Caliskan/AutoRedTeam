@@ -35,7 +35,9 @@ config/.env
 data/corporate.db
 data/*.db
 data/assessment_findings.jsonl
+data/assessment_findings.backup.jsonl
 data/assessment_audit_log.jsonl
+data/autonomous_audit.jsonl
 data/benchmark_results.jsonl
 data/session_logs/
 data/vfs/

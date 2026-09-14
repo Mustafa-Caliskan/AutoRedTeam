@@ -411,6 +411,70 @@ class OrchestratorAgent:
         logger.info(f"[Orchestrator] Web search #{self._search_count}: {query}")
         return web_search(query)
 
+    def triage(
+        self,
+        findings: List[Dict[str, Any]],
+        untested: List[str],
+        credentials: List[str],
+        target: str = "",
+    ) -> str:
+        """
+        v3.0 Triage Advisor rolu: kanit yorumu ve oncelik karari.
+
+        Deterministik planner'in urettigi bulgular uzerinden "siradaki en
+        degerli hedef ne?" sorusuna yorum getirir. LLM erisilemezse bos
+        string doner; cagiran taraf deterministik davranisa devam eder.
+        """
+        findings_summary = self._summarize_findings(findings)
+        prompt = (
+            f"You are a security assessment triage advisor for target '{target}'.\n\n"
+            f"Current findings:\n{findings_summary}\n\n"
+            f"Untested services: {', '.join(untested[:10]) or '(none)'}\n"
+            f"Obtained credentials: {', '.join(credentials[:10]) or '(none)'}\n\n"
+            "Decide the single highest-value next target. Answer in JSON only:\n"
+            '{"priority_target": "...", "reason": "...", "confidence": 0.0}'
+        )
+        try:
+            messages = [
+                {"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
+            result = self._call_with_tools(messages, None)
+            logger.info(f"[Orchestrator] triage: {result[:150]}...")
+            return result
+        except Exception as e:
+            logger.warning(f"[Orchestrator] triage failed: {e}")
+            return ""
+
+    def escalate(
+        self,
+        target: str,
+        attempted_steps: List[str],
+        findings: List[Dict[str, Any]],
+    ) -> str:
+        """
+        v3.0 Escalation Oracle rolu: tum deterministik yollar tukenince
+        yaratici alternatif strateji. LLM erisilemezse bos string doner.
+        """
+        prompt = (
+            f"You are a supreme escalation oracle for target '{target}'.\n"
+            "All standard exploitation paths have been exhausted.\n\n"
+            f"Attempted steps: {', '.join(attempted_steps[:15]) or '(none)'}\n"
+            f"Findings: {', '.join(f.get('category', '') for f in findings[-10:]) or '(none)'}\n\n"
+            "Provide a creative, non-obvious attack strategy. Think laterally. Be concise."
+        )
+        try:
+            messages = [
+                {"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
+            result = self._call_with_tools(messages, None)
+            logger.info(f"[Orchestrator] escalate: {result[:150]}...")
+            return result
+        except Exception as e:
+            logger.warning(f"[Orchestrator] escalate failed: {e}")
+            return ""
+
     def _call_with_tools(
         self,
         messages: List[Dict[str, str]],

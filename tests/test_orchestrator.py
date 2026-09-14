@@ -175,3 +175,28 @@ def test_orchestrator_research():
     assert isinstance(res, str)
     assert len(res) > 0
 
+
+def test_orchestrator_triage_returns_string():
+    """v3.0 Triage Advisor rolu calismali."""
+    mock_client = MockLLMClient(model_name="mock-deepseek")
+    orch = OrchestratorAgent(client=mock_client)
+    result = orch.triage(
+        findings=[{"category": "Weak Default Credentials", "severity": "Critical"}],
+        untested=["mysql", "tomcat"],
+        credentials=["msfadmin:msfadmin"],
+        target="metasploitable2",
+    )
+    assert isinstance(result, str)
+
+
+def test_orchestrator_escalate_returns_string():
+    """v3.0 Escalation Oracle rolu calismali."""
+    mock_client = MockLLMClient(model_name="mock-deepseek")
+    orch = OrchestratorAgent(client=mock_client)
+    result = orch.escalate(
+        target="metasploitable2",
+        attempted_steps=["vsftpd_backdoor", "samba_usermap"],
+        findings=[{"category": "Known vulnerable service version"}],
+    )
+    assert isinstance(result, str)
+

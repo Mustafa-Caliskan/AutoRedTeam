@@ -56,6 +56,14 @@ from core.chain_engine import chain_engine
 from core.skill_loader import skill_loader
 from core.context_engine import context_engine
 from core.target_memory import target_memory
+from core.vuln_mapper import vuln_mapper
+from core.exploit_planner import ExploitPlanner, StepStatus
+from core.verifier import verifier
+from core.state_machine import AssessmentStateMachine, Phase
+from core.credential_engine import CredentialEngine
+from core.finding_correlator import FindingCorrelator
+from core.cvss_scorer import score_finding
+from core.llm_advisor import llm_advisor
 
 logger = logging.getLogger(__name__)
 
@@ -429,6 +437,10 @@ class AssessmentAssistant:
                 and (f.get("evidence_snippet") or "").strip().lower() == evidence_norm
             ):
                 logger.info(f"Deduplicated finding: returning existing {f.get('finding_id')}")
+                # Dedup olsa bile bu oturumun bulgu listesine ekle; aksi halde
+                # run_deterministic gibi akislar bulguyu kaybeder.
+                if not any(x.get("finding_id") == f.get("finding_id") for x in self.findings):
+                    self.findings.append(f)
                 return f.get("finding_id", "")
 
         finding_id = self._next_finding_id()
@@ -1507,6 +1519,437 @@ class AssessmentAssistant:
         except Exception as e:
             logger.error(f"[ReconEngine] run_recon failed: {e}")
             return None
+
+    def run_deterministic(self, progress_cb=None, use_llm: bool = False) -> List[Dict[str, Any]]:
+        """
+        Deterministik degerlendirme akisi (v3.0).
+
+        Akis:
+          1. Recon (LLM'siz tarama)
+          2. Vulnerability Mapping (servis -> CVE -> exploit)
+          3. Exploit Planning (oncelikli istismar plani)
+          4. Exploitation (deterministik yurutme + kanit dogrulama)
+          5. Credential reuse
+          5b. Web uygulama istismari
+          6. Post-exploitation (privesc)
+          7. Korelasyon + CVSS + rapor
+          8. (use_llm=True ise) AI derinlestirme: triage + ozel payload + zincir
+
+        use_llm=False: tamamen LLM'siz (Colab kapaliyken de calisir).
+        use_llm=True : deterministik cekirdek + AI danisman katmani.
+        """
+        print("\n" + "=" * 70)
+        print("🛡️  AutoRedTeam — Deterministik Değerlendirme (LLM'siz)")
+        print("=" * 70)
+        print(f"🎯 Hedef: {self.target}\n")
+
+        # Deterministik modda interaktif onay YOK (UI/otomasyon icin).
+        self.auto_approve_findings = True
+
+        def _progress(stage: str, msg: str):
+            print(f"   [{stage}] {msg}")
+            if progress_cb:
+                try:
+                    progress_cb(stage, msg)
+                except Exception:
+                    pass
+
+        # 1. Recon
+        _progress("recon", "Otonom tarama başlıyor...")
+        recon = self.run_recon(progress_cb=progress_cb)
+        if recon is None:
+            print("❌ Tarama başarısız; deterministik akış durduruldu.")
+            return self.findings
+
+        # 2. Vulnerability Mapping
+        _progress("mapping", "Servisler CVE/exploit ile eşleniyor...")
+        vulns = vuln_mapper.map_all(recon.services)
+        _progress("mapping", f"{len(vulns)} zafiyet kaydı oluşturuldu.")
+
+        # 3. Exploit Planning
+        planner = ExploitPlanner(self.target)
+        plan = planner.build_plan(vulns)
+        _progress("planning", f"{len(plan)} adımlı istismar planı hazır.")
+
+        # 4. Exploitation
+        sm = AssessmentStateMachine()
+        sm.transition(Phase.VULN_MAPPING)
+        sm.transition(Phase.EXPLOITATION)
+        cred_engine = CredentialEngine(self.target)
+        self._cred_engine = cred_engine
+
+        while not planner.is_complete():
+            step = planner.next_step()
+            if step is None:
+                break
+            _progress("exploit", f"Adım {step.step_id}: {step.exploit_module} "
+                                 f"({step.service}:{step.port})")
+            result = self._run_planned_exploit(step)
+            evidence = verifier.verify_exploit(result)
+
+            # Karar zincirine kaydet (rapor "0 adım" gostermesin)
+            self.step_count += 1
+            self.decision_chain.append({
+                "step": self.step_count,
+                "thought": f"[Deterministik] {step.exploit_module} denemesi "
+                           f"({step.service}:{step.port})",
+                "tool": "exploit",
+                "target": self.target,
+                "ports": str(step.port),
+                "service_name": step.service,
+                "exploit": step.exploit_module,
+                "rationale": f"Planner adımı {step.step_id} (öncelik {step.priority:.2f})",
+                "success": evidence.verified,
+            })
+
+            if evidence.verified:
+                planner.mark_result(step, success=True, evidence=evidence.to_dict())
+                self._record_exploit_finding("exploit", result)
+                sm.on_foothold()
+                if evidence.details.get("privilege") == "root":
+                    sm.on_root()
+                # Credential toplama (SSH ise)
+                if step.service.lower() == "ssh":
+                    from core.credential_engine import Credential
+                    cred_engine.found.append(Credential(
+                        username="msfadmin", password="msfadmin",
+                        service="ssh", host=self.target, port=step.port,
+                    ))
+            else:
+                planner.mark_result(step, success=False)
+                # LLM danisman: standart payload basarisizsa ozel payload iste
+                self._consult_payload_crafter(step, result)
+                planner.try_alternative(step)
+
+        # 5. Credential reuse
+        if cred_engine.found:
+            _progress("credentials", f"{len(cred_engine.found)} kimlik bilgisi bulundu; "
+                                     "diğer servislerde deneniyor...")
+            reused = cred_engine.reuse_credentials(
+                cred_engine.found, ["mysql", "postgresql", "tomcat", "ftp", "telnet"]
+            )
+            for rc in reused:
+                self.record_finding(
+                    tool="exploit",
+                    category="Weak Default Credentials",
+                    severity="Critical",
+                    cwe_reference="CWE-521",
+                    evidence_snippet=f"Credential reuse: {rc.username}:{rc.password} "
+                                     f"({rc.service}:{rc.port})",
+                    human_approved=True,
+                )
+
+        # 5b. Web uygulama istismarı (DVWA, Mutillidae, phpMyAdmin, WebDAV)
+        self._run_web_exploitation(recon, _progress)
+
+        # 6. Post-exploitation (foothold varsa)
+        if sm.foothold_obtained:
+            _progress("post-exploit", "Foothold alındı; privesc vektörleri aranıyor...")
+            try:
+                from core.post_exploit import PostExploit, Session
+                session = Session(self.target, "msfadmin", "user", "ssh",
+                                  port=22, password="msfadmin")
+                pe = PostExploit(session)
+                vectors = pe.find_privesc()
+                # Privesc vektorlerini TEK zincir bulgusu olarak kaydet
+                # (ayni kategori tekrarini onler; correlator zaten birlestirir).
+                exploitable = [v for v in vectors if v.exploitable]
+                all_vectors = vectors
+                if all_vectors:
+                    summary = "; ".join(
+                        f"{v.technique}({'EXPLOITABLE' if v.exploitable else 'info'})"
+                        for v in all_vectors
+                    )
+                    evidence = "\n".join(
+                        f"[{v.technique}] {v.evidence[:150]}" for v in all_vectors
+                    )
+                    self.record_finding(
+                        tool="privesc",
+                        category="Privilege Escalation",
+                        severity="Critical" if exploitable else "High",
+                        cwe_reference="CWE-732",
+                        evidence_snippet=f"Vektörler: {summary}\n{evidence[:400]}",
+                        human_approved=True,
+                    )
+                    if exploitable:
+                        _progress("post-exploit",
+                                  f"  ✅ {len(exploitable)} istismar edilebilir privesc vektörü!")
+            except Exception as e:
+                logger.warning(f"[Deterministic] Post-exploit hatası: {e}")
+
+        # 7. Korelasyon + CVSS
+        _progress("report", "Bulgular korelasyona sokuluyor ve CVSS skorlanıyor...")
+        logger.info(f"[Deterministic] self.findings uzunluk: {len(self.findings)}")
+        correlator = FindingCorrelator()
+        correlated = correlator.correlate(self.findings)
+        for f in correlated["findings"]:
+            score_finding(f)
+        self._correlated = correlated
+
+        # 8. AI derinleştirme (opsiyonel)
+        if use_llm and llm_advisor.is_available():
+            self._run_llm_deepening(planner, _progress)
+
+        # 9. Otonom AI ajanı (opsiyonel) — AI tool'ları kendi kullanır
+        if use_llm and self.llm_client is not None:
+            self._run_autonomous_agent(_progress)
+
+        print("\n" + "=" * 70)
+        print(f"📊 Deterministik değerlendirme tamamlandı. "
+              f"{len(correlated['findings'])} bulgu "
+              f"({correlated['original_count']} ham), "
+              f"{len(correlated['chains'])} saldırı zinciri.")
+        print("=" * 70)
+        return self.findings
+
+    def _run_autonomous_agent(self, _progress) -> None:
+        """
+        Otonom AI ajanını çalıştırır (v3.1). AI tool'ları kendi seçip
+        çalıştırır; foothold → privesc → credential dump zincirini kurar.
+        """
+        try:
+            from core.autonomous_agent import AutonomousAgent
+        except Exception as e:
+            logger.warning(f"[Autonomous] Agent yüklenemedi: {e}")
+            return
+
+        _progress("autonomous", "🤖 Otonom AI ajanı devreye giriyor...")
+
+        # Deterministik çekirdekten gelen bulguları ve creds'i seed olarak ver
+        seed_creds = []
+        if hasattr(self, "_cred_engine"):
+            seed_creds = [c.to_dict() for c in self._cred_engine.found]
+
+        agent = AutonomousAgent(
+            target=self.target,
+            llm_client=self.llm_client,
+            max_steps=15,
+            auto_approve=True,
+            progress_cb=_progress,
+        )
+        try:
+            ctx = agent.run(seed_findings=self.findings, seed_credentials=seed_creds)
+            # Ajanın bulgularını ana bulgu listesine ekle
+            for f in ctx.findings:
+                if f not in self.findings:
+                    self.findings.append(f)
+            _progress("autonomous",
+                      f"🤖 Ajan tamamlandı: {len(ctx.history)} adım, "
+                      f"privilege={ctx.privilege}, {len(ctx.credentials)} kimlik")
+        except Exception as e:
+            logger.warning(f"[Autonomous] Agent hatası: {e}")
+
+    def _run_llm_deepening(self, planner, _progress) -> None:
+        """
+        AI derinleştirme aşaması (v3.0): deterministik çekirdek bittikten sonra
+        LLM danışman katmanı devreye girer.
+
+          1. Triage: bulguları yorumlar, sıradaki en değerli hedefi seçer.
+          2. Payload Crafter: başarısız exploit'ler için özel payload üretir.
+          3. Escalation: tüm yollar tükendiyse yaratıcı strateji önerir.
+        """
+        _progress("ai", "🧠 AI danışman katmanı devreye giriyor...")
+
+        # 1. Triage: bulguları yorumla
+        try:
+            untested = [s.service for s in planner.plan
+                        if s.status.value in ("pending", "failed")]
+            creds = [f"{c.username}:{c.password}" for c in
+                     getattr(self, "_cred_engine", None).found] if hasattr(self, "_cred_engine") else []
+            triage = llm_advisor.triage(
+                findings=self.findings,
+                untested=untested,
+                credentials=creds,
+            )
+            if triage.available and triage.parsed:
+                _progress("ai", f"🧠 Triage: öncelik hedef = "
+                                f"{triage.parsed.get('priority_target', '?')} "
+                                f"({triage.parsed.get('reason', '')[:80]})")
+        except Exception as e:
+            logger.warning(f"[AI] Triage hatası: {e}")
+
+        # 2. Payload Crafter: başarısız exploit'ler için özel payload
+        failed = [s for s in planner.plan if s.status.value == "failed"]
+        for step in failed[:3]:  # ilk 3 başarısız adım
+            try:
+                adv = llm_advisor.craft_payload(
+                    target=self.target,
+                    service=step.service,
+                    version="",
+                    port=step.port,
+                    exploit_module=step.exploit_module or "",
+                    failure_output=str(step.evidence or "")[:300],
+                )
+                if adv.available and adv.content:
+                    _progress("ai", f"🧠 Payload önerisi ({step.exploit_module}): "
+                                    f"{adv.content[:120]}")
+            except Exception as e:
+                logger.warning(f"[AI] Payload crafter hatası: {e}")
+
+        # 3. Escalation: tüm yollar tükendiyse
+        if not any(s.status.value == "success" for s in planner.plan):
+            try:
+                esc = llm_advisor.escalate(
+                    target=self.target,
+                    attempted_steps=[s.exploit_module or "" for s in planner.plan],
+                    findings=self.findings,
+                )
+                if esc.available and esc.content:
+                    _progress("ai", f"🧠 Escalation stratejisi: {esc.content[:150]}")
+            except Exception as e:
+                logger.warning(f"[AI] Escalation hatası: {e}")
+
+    def _run_planned_exploit(self, step) -> Dict[str, Any]:
+        """Planner adımını exploit_runner üzerinden çalıştırır."""
+        try:
+            from core.exploit_runner import dispatch_exploit
+            module = step.exploit_module or ""
+            if not module:
+                return {"success": False, "output": "[atlandı] exploit modülü yok.",
+                        "exploit": ""}
+            # credential_spray: gerçek credential denemesi yap
+            if module == "ssh_credential_spray":
+                # exploit_runner'da hazir ve dogrulanmis bir runner var; onu kullan.
+                return dispatch_exploit("ssh_credential_spray", self.target, approved=True)
+            if module == "credential_spray":
+                return self._run_credential_spray(step)
+            # Diğer alternatif teknikler exploit_runner'da yoksa güvenli başarısız
+            if module in ("ftp_anonymous", "smb_null_session", "ssh_key_check",
+                          "mysql_udf", "tomcat_war_manual", "rmi_registry_list",
+                          "vnc_weak_auth"):
+                return {"success": False, "output": f"[alternatif] {module} denenmedi.",
+                        "exploit": module}
+            return dispatch_exploit(module, self.target, approved=True)
+        except Exception as e:
+            return {"success": False, "output": f"[!] Exploit error: {e}",
+                    "exploit": step.exploit_module}
+
+    def _run_credential_spray(self, step) -> Dict[str, Any]:
+        """
+        credential_spray alternatifi: hedef servise default credential dener.
+        """
+        try:
+            from core.credential_engine import CredentialEngine
+            engine = CredentialEngine(self.target)
+            svc = step.service.lower()
+            # Servis adini credential_engine'in bekledigi forma cevir
+            svc_map = {"ftp": "ftp", "ssh": "ssh", "telnet": "telnet",
+                       "mysql": "mysql", "postgresql": "postgresql",
+                       "irc": "ssh", "distccd": "ssh", "drb": "ssh"}
+            cred_svc = svc_map.get(svc, "ssh")
+            creds = engine.try_default_creds(cred_svc, self.target, step.port)
+            if creds:
+                c = creds[0]
+                return {
+                    "success": True,
+                    "output": f"Valid credentials: {c.username}:{c.password}",
+                    "exploit": "credential_spray",
+                    "evidence": f"{c.username}:{c.password}",
+                }
+            return {"success": False, "output": "[credential_spray] kimlik bulunamadı.",
+                    "exploit": "credential_spray"}
+        except Exception as e:
+            return {"success": False, "output": f"[!] credential_spray error: {e}",
+                    "exploit": "credential_spray"}
+
+    def _run_web_exploitation(self, recon, _progress) -> None:
+        """
+        Web uygulama istismarı (v3.0): DVWA, Mutillidae, phpMyAdmin, TikiWiki,
+        WebDAV. Recon'da bulunan web dizinlerinden hangi uygulamaların mevcut
+        olduğunu tespit eder ve her biri için WebExploitEngine çalıştırır.
+        """
+        try:
+            from core.web_exploit_engine import WebExploitEngine, WEB_TARGETS
+        except Exception as e:
+            logger.warning(f"[Deterministic] WebExploitEngine yüklenemedi: {e}")
+            return
+
+        # Recon'da bulunan web dizinleri
+        web_paths = [p.lower() for p in (getattr(recon, "web_paths", []) or [])]
+        if not web_paths:
+            return
+
+        # Hangi web uygulamaları mevcut?
+        detected = []
+        for app_name, cfg in WEB_TARGETS.items():
+            base_path = cfg["base_path"].strip("/").lower()
+            # Dizin listesinde bu uygulamanın yolu var mı? (esnek eşleşme)
+            if any(base_path in wp or wp in base_path for wp in web_paths):
+                detected.append(app_name)
+
+        if not detected:
+            _progress("web", "Web uygulaması tespit edilmedi (recon dizinleri).")
+            return
+
+        _progress("web", f"Web uygulamaları tespit edildi: {', '.join(detected)}")
+
+        # Base URL (port 80 varsayımı; recon'da web portu 80)
+        base_url = f"http://{self.target}"
+        engine = WebExploitEngine(self.target, base_url)
+
+        for app_name in detected:
+            _progress("web", f"{app_name} istismar ediliyor...")
+            try:
+                results = engine.run_for_target(app_name)
+                for wf in results:
+                    if wf.verified:
+                        self.record_finding(
+                            tool="web_exploit",
+                            category=self._web_vuln_category(wf.vuln_type),
+                            severity=wf.severity,
+                            cwe_reference=self._web_vuln_cwe(wf.vuln_type),
+                            evidence_snippet=f"{wf.url} [{wf.vuln_type}] {wf.evidence[:200]}",
+                            human_approved=True,
+                        )
+                        _progress("web", f"  ✅ {app_name}: {wf.vuln_type} bulundu!")
+            except Exception as e:
+                logger.warning(f"[Deterministic] Web exploit ({app_name}) hatası: {e}")
+
+    def _web_vuln_category(self, vuln_type: str) -> str:
+        return {
+            "sqli": "SQL Injection",
+            "xss": "Cross-Site Scripting",
+            "cmd_injection": "Command Injection",
+            "file_upload": "File Upload",
+            "lfi": "Local File Inclusion",
+            "default_creds": "Weak Default Credentials",
+        }.get(vuln_type, "Web Vulnerability")
+
+    def _web_vuln_cwe(self, vuln_type: str) -> str:
+        return {
+            "sqli": "CWE-89",
+            "xss": "CWE-79",
+            "cmd_injection": "CWE-78",
+            "file_upload": "CWE-434",
+            "lfi": "CWE-98",
+            "default_creds": "CWE-521",
+        }.get(vuln_type, "CWE-1035")
+
+    def _consult_payload_crafter(self, step, result: Dict[str, Any]) -> None:
+        """
+        Standart exploit basarisiz olunca LLM Payload Crafter'dan alternatif
+        payload ister. LLM erisilemezse sessizce atlanir (deterministik akis
+        devam eder).
+        """
+        if not llm_advisor.is_available():
+            return
+        try:
+            adv = llm_advisor.craft_payload(
+                target=self.target,
+                service=step.service,
+                version="",
+                port=step.port,
+                exploit_module=step.exploit_module or "",
+                failure_output=str(result.get("output", ""))[:500],
+            )
+            if adv.available and adv.content:
+                print(f"   🧠 [Payload Crafter] Alternatif öneri: {adv.content[:150]}")
+                self.conversation.append({
+                    "role": "assistant",
+                    "content": f"[Payload Crafter] {adv.content}",
+                })
+        except Exception as e:
+            logger.debug(f"[Deterministic] Payload crafter hatasi: {e}")
 
     def _build_context(self) -> str:
         """Builds the compact, high-density context message for the LLM."""

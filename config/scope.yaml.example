@@ -1,0 +1,34 @@
+# AutoRedTeam - Dinamik Kapsam (Scope) Yapilandirmasi
+#
+# Bu dosya OPSIYONELDIR. Varsa, config/allowed_targets.txt'e EK olarak
+# domain wildcard ve IP range tabanli kapsam kontrolu saglar. Bug bounty
+# programlari icin kullanilir.
+#
+# ONEMLI: Yalnizca YETKILI oldugunuz hedefleri ekleyin. Bu dosyayi
+# degistirmek kapsami genisletir.
+#
+# PyYAML gerekir: pip install pyyaml
+
+scope:
+  # Domain wildcard'lari (fnmatch deseni)
+  domains:
+    - "*.example.com"
+    - "api.example.com"
+  # IP araliklari (CIDR)
+  ips:
+    - "10.0.0.0/24"
+    - "192.168.56.0/24"
+  # Kapsam disi birakilacaklar (once kontrol edilir)
+  excluded:
+    - "admin.example.com"
+    - "*.internal.example.com"
+
+# Istek hizi sinirlama (WAF tespitini onlemek icin)
+rate_limit:
+  requests_per_second: 10
+  delay_ms: 100
+
+# Proxy destegi (Burp/ZAP icin)
+proxy:
+  enabled: false
+  url: "http://127.0.0.1:8080"
