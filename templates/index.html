@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoRedTeam — Security Assessment Console</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --surface: #12151a;
+    --surface-2: #161a20;
+    --border: #22262e;
+    --border-strong: #2e343d;
+    --text: #e6e8eb;
+    --muted: #8b929e;
+    --muted-2: #6b7280;
+    --accent: #4f7cff;
+    --accent-dim: #23345f;
+    --ok: #34d399;
+    --warn: #f59e0b;
+    --crit: #ef4444;
+    --high: #f97316;
+    --med: #eab308;
+    --low: #38bdf8;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Top bar ───────────────────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 10px 18px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .brand { display: flex; align-items: center; gap: 9px; }
+  .brand-mark {
+    width: 22px; height: 22px;
+    border: 1.5px solid var(--accent);
+    border-radius: 5px;
+    display: grid; place-items: center;
+    font-family: var(--mono); font-size: 11px; font-weight: 700;
+    color: var(--accent);
+  }
+  .brand-name { font-weight: 650; font-size: 13.5px; letter-spacing: -0.01em; }
+  .brand-sub { color: var(--muted-2); font-size: 11px; border-left: 1px solid var(--border-strong); padding-left: 10px; }
+
+  .controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .field {
+    appearance: none;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-family: var(--sans);
+    cursor: pointer;
+  }
+  .field:focus { outline: none; border-color: var(--accent); }
+  label.check { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; cursor: pointer; }
+  label.check input { accent-color: var(--accent); }
+
+  .btn {
+    appearance: none;
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: var(--sans);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--muted-2); background: #1b2028; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #3f6ae8; border-color: #3f6ae8; }
+  .btn-ghost { background: transparent; }
+
+  /* ── Tab nav ───────────────────────────────────────────── */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 18px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .tab {
+    appearance: none; background: none; border: none;
+    color: var(--muted);
+    padding: 9px 14px;
+    font-size: 12.5px;
+    font-family: var(--sans);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color .12s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+  /* ── Main ──────────────────────────────────────────────── */
+  main { flex: 1; overflow: hidden; position: relative; }
+  .tab-panel { display: none; height: 100%; }
+  .tab-panel.active { display: block; }
+
+  .live-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    height: 100%;
+    background: var(--border);
+  }
+  .col { background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .panel-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .badge {
+    font-family: var(--mono); font-size: 11px;
+    background: var(--surface-2); border: 1px solid var(--border-strong);
+    border-radius: 4px; padding: 1px 7px; color: var(--text);
+  }
+  .scroll { flex: 1; overflow-y: auto; padding: 12px; }
+  .scroll::-webkit-scrollbar { width: 9px; }
+  .scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
+  .scroll::-webkit-scrollbar-track { background: transparent; }
+
+  .empty { color: var(--muted-2); font-size: 12px; text-align: center; padding: 32px 12px; }
+
+  /* Cards */
+  .entry {
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 9px 11px;
+    margin-bottom: 8px;
+    background: var(--surface);
+  }
+  .entry-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+  .entry-name { font-size: 12px; font-weight: 600; }
+  .tag {
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em;
+    padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border-strong);
+    color: var(--muted); white-space: nowrap;
+  }
+  .tag.crit { color: var(--crit); border-color: #4a1f22; background: #1e1112; }
+  .tag.high { color: var(--high); border-color: #4a2e18; background: #1f150e; }
+  .tag.med  { color: var(--med);  border-color: #453a12; background: #1d1a0d; }
+  .tag.low  { color: var(--low);  border-color: #17384a; background: #0e1a20; }
+  .tag.ok   { color: var(--ok);   border-color: #12352a; background: #0d1a16; }
+  .tag.info { color: var(--muted); }
+  .meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted-2); display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+  .evidence {
+    font-family: var(--mono); font-size: 10.5px; line-height: 1.45;
+    background: #0b0d10; border: 1px solid var(--border);
+    border-radius: 4px; padding: 7px 9px; color: #b8bec9;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 120px; overflow: hidden;
+  }
+  .directive { font-size: 12px; color: #c3cad6; white-space: pre-wrap; }
+  .step-line { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+
+  /* Gate */
+  .gate-summary { display: flex; gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
+  .gate-stat { flex: 1; background: var(--bg); padding: 14px 16px; }
+  .gate-stat .n { font-size: 22px; font-weight: 650; font-family: var(--mono); }
+  .gate-stat .l { font-size: 11px; color: var(--muted-2); text-transform: uppercase; letter-spacing: .05em; margin-top: 2px; }
+
+  /* Skills */
+  .toolbar { display: flex; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .toolbar input, .toolbar select { flex: 1; }
+  .skills-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; padding: 14px; overflow-y: auto; }
+  .skill { border: 1px solid var(--border); border-radius: 6px; padding: 11px 12px; background: var(--surface); }
+  .skill h4 { font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+  .skill p { font-size: 11.5px; color: var(--muted); }
+
+  /* Report modal */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.72); display: none; z-index: 50; padding: 40px 6vw; }
+  .modal.open { display: flex; }
+  .modal-box { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; display: flex; flex-direction: column; width: 100%; overflow: hidden; }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .modal-body { padding: 20px; overflow-y: auto; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; color: #c3cad6; }
+
+  /* Status bar */
+  .statusbar {
+    display: flex; align-items: center; gap: 18px;
+    padding: 6px 18px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    font-size: 11.5px; color: var(--muted);
+    flex-shrink: 0;
+  }
+  .status-item { display: flex; align-items: center; gap: 6px; }
+  .status-item b { font-family: var(--mono); color: var(--text); font-weight: 600; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2); }
+  .dot.live { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.err  { background: var(--crit); }
+  .status-text { color: var(--text); }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">AR</div>
+    <span class="brand-name">AutoRedTeam</span>
+    <span class="brand-sub">Security Assessment Console</span>
+  </div>
+  <div class="controls">
+    <select id="target-select" class="field" title="Hedef">
+      <option value="metasploitable2">metasploitable2</option>
+      <option value="localhost:3000">localhost:3000 (Juice Shop)</option>
+    </select>
+    <select id="steps-select" class="field" title="Maks. adım">
+      <option value="16">16 adım</option>
+      <option value="20" selected>20 adım</option>
+      <option value="30">30 adım</option>
+      <option value="50">50 adım</option>
+    </select>
+    <label class="check"><input type="checkbox" id="autonomous-toggle" checked> Otonom</label>
+    <button id="btn-start" class="btn btn-primary" onclick="startAssessment()">Başlat</button>
+    <button id="btn-deterministic" class="btn" onclick="startDeterministic()" title="LLM'siz deterministik tarama">Deterministik</button>
+    <button id="btn-deterministic-ai" class="btn" onclick="startDeterministicAI()" title="Deterministik + AI danışman">Deterministik + AI</button>
+    <button id="btn-autonomous" class="btn" onclick="startAutonomous()" title="Otonom AI ajanı">Otonom AI</button>
+    <button id="btn-stop" class="btn btn-ghost" onclick="stopAssessment()" disabled>Durdur</button>
+  </div>
+</header>
+
+<!-- Tabs -->
+<nav class="tabs">
+  <button class="tab active" id="btn-tab-live" onclick="switchTab('tab-live')">Canlı Değerlendirme</button>
+  <button class="tab" id="btn-tab-skills" onclick="switchTab('tab-skills')">Yetenekler</button>
+  <button class="tab" id="btn-tab-gate" onclick="switchTab('tab-gate')">Doğrulama Kapısı</button>
+  <button class="tab" id="btn-tab-chains" onclick="switchTab('tab-chains')">Exploit Zincirleri</button>
+  <button class="tab" id="btn-tab-debugger" onclick="switchTab('tab-debugger')">Debugger</button>
+</nav>
+
+<main>
+  <!-- Live -->
+  <section id="tab-live" class="tab-panel active">
+    <div class="live-grid">
+      <div class="col">
+        <div class="panel-head">
+          <span class="panel-title">Karar Akışı &amp; Araç Çıktısı</span>
+          <span class="badge" id="stat-step">0 adım</span>
+        </div>
+        <div class="scroll" id="decision-feed">
+          <div class="empty">Değerlendirme başlatıldığında model kararları ve araç çıktıları burada görünür.</div>
+        </div>
+        <div class="scroll" id="terminal-feed" style="display:none;"></div>
+      </div>
+      <div class="col">
+        <div class="panel-head">
+          <span class="panel-title">Bulgular</span>
+          <span class="badge" id="findings-count-badge">0</span>
+        </div>
+        <div class="scroll" id="findings-board">
+          <div class="empty">Henüz bulgu yok.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Skills -->
+  <section id="tab-skills" class="tab-panel">
+    <div class="toolbar">
+      <input id="skills-search-input" class="field" placeholder="Yetenek ara..." oninput="searchSkillsLive()">
+      <select id="skills-domain-filter" class="field" onchange="searchSkillsLive()">
+        <option value="">Tüm alanlar</option>
+      </select>
+    </div>
+    <div class="skills-grid" id="skills-grid"></div>
+    <div class="statusbar" style="border-top:none; justify-content:flex-end;">
+      <span class="status-item">Hedef yetenekler: <b id="target-skills-names">—</b></span>
+      <span class="status-item">Filtreli: <b id="stat-filtered">0</b></span>
+    </div>
+  </section>
+
+  <!-- Gate -->
+  <section id="tab-gate" class="tab-panel">
+    <div class="gate-summary">
+      <div class="gate-stat"><div class="n" style="color:var(--ok)" id="gate-stat-pass">0</div><div class="l">Onaylandı</div></div>
+      <div class="gate-stat"><div class="n" style="color:var(--crit)" id="gate-stat-kill">0</div><div class="l">Reddedildi</div></div>
+    </div>
+    <div class="scroll" id="gate-events-feed">
+      <div class="empty">Doğrulama kapısı kararları burada listelenir.</div>
+    </div>
+  </section>
+
+  <!-- Chains -->
+  <section id="tab-chains" class="tab-panel">
+    <div class="scroll" id="chains-container">
+      <div class="empty">Exploit zincirleri değerlendirme sonunda burada görünür.</div>
+    </div>
+  </section>
+
+  <!-- Debugger -->
+  <section id="tab-debugger" class="tab-panel">
+    <div class="live-grid">
+      <div class="col">
+        <div class="panel-head"><span class="panel-title">Disassembly</span>
+          <button class="btn btn-ghost" onclick="refreshDebuggerData()">Yenile</button></div>
+        <div class="scroll"><pre id="debugger-disasm" class="evidence" style="max-height:none;"></pre></div>
+      </div>
+      <div class="col">
+        <div class="panel-head"><span class="panel-title">Registers</span></div>
+        <div class="scroll"><pre id="debugger-registers" class="evidence" style="max-height:none;"></pre></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Status bar -->
+<footer class="statusbar">
+  <span class="status-item"><span class="dot" id="status-dot"></span><span class="status-text" id="status-text">Sistem hazır.</span></span>
+  <span class="status-item" style="margin-left:auto;">Bulgu: <b id="stat-findings">0</b></span>
+  <span class="status-item">Zincir: <b id="stat-chains">0</b></span>
+  <span class="status-item">
+    <button class="btn btn-ghost" onclick="viewReport()">Rapor</button>
+  </span>
+</footer>
+
+<!-- Report modal -->
+<div class="modal" id="report-modal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span class="panel-title">Değerlendirme Raporu</span>
+      <button class="btn btn-ghost" onclick="closeReport()">Kapat</button>
+    </div>
+    <div class="modal-body" id="report-content">Yükleniyor...</div>
+  </div>
+</div>
+
+<script>
+/* ── State ─────────────────────────────────────────────── */
+let eventSource = null;
+let findingsList = [];
+let allSkills = [];
+let stepCount = 0;
+
+/* ── Helpers ───────────────────────────────────────────── */
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function sevClass(sev) {
+  const s = String(sev || '').toLowerCase();
+  if (s === 'critical') return 'crit';
+  if (s === 'high') return 'high';
+  if (s === 'medium') return 'med';
+  if (s === 'low') return 'low';
+  return 'info';
+}
+function setStatus(text, kind) {
+  document.getElementById('status-text').innerText = text;
+  const dot = document.getElementById('status-dot');
+  dot.className = 'dot' + (kind ? ' ' + kind : '');
+}
+function setButtons(disabled) {
+  ['btn-start', 'btn-deterministic', 'btn-deterministic-ai', 'btn-autonomous']
+    .forEach(id => { document.getElementById(id).disabled = disabled; });
+  document.getElementById('btn-stop').disabled = !disabled;
+}
+function clearFeeds() {
+  document.getElementById('decision-feed').innerHTML = '';
+  document.getElementById('terminal-feed').innerHTML = '';
+  document.getElementById('findings-board').innerHTML = '';
+  document.getElementById('gate-events-feed').innerHTML = '';
+  document.getElementById('chains-container').innerHTML = '';
+  findingsList = [];
+  stepCount = 0;
+  updateStats();
+}
+function updateStats() {
+  document.getElementById('stat-findings').innerText = findingsList.length;
+  document.getElementById('findings-count-badge').innerText = findingsList.length;
+  document.getElementById('stat-step').innerText = stepCount + ' adım';
+}
+
+/* ── Tabs ──────────────────────────────────────────────── */
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(tabId).classList.add('active');
+  const btn = document.getElementById('btn-' + tabId);
+  if (btn) btn.classList.add('active');
+}
+
+/* ── Mode starters ─────────────────────────────────────── */
+function startAssessment() {
+  const target = document.getElementById('target-select').value;
+  const maxSteps = document.getElementById('steps-select').value;
+  const autonomous = document.getElementById('autonomous-toggle').checked;
+  clearFeeds();
+  setButtons(true);
+  setStatus(`Değerlendirme yürütülüyor: ${target}`, 'live');
+  const interactive = !autonomous;
+  eventSource = new EventSource(`/api/stream?target=${encodeURIComponent(target)}&max_steps=${maxSteps}&autonomous=${autonomous}&interactive=${interactive}`);
+  eventSource.onmessage = handleSSE;
+  eventSource.onerror = onSSEError;
+}
+function startDeterministic() { runDeterministicMode('deterministic'); }
+function startDeterministicAI() { runDeterministicMode('deterministic_ai'); }
+function startAutonomous() { runDeterministicMode('autonomous'); }
+
+function runDeterministicMode(mode) {
+  const target = document.getElementById('target-select').value;
+  const maxSteps = document.getElementById('steps-select').value;
+  const labels = {
+    deterministic: "Deterministik değerlendirme (LLM'siz)",
+    deterministic_ai: "Deterministik + AI değerlendirme",
+    autonomous: "Otonom AI ajanı",
+  };
+  clearFeeds();
+  setButtons(true);
+  setStatus(`${labels[mode]}: ${target}`, 'live');
+  eventSource = new EventSource(`/api/stream?target=${encodeURIComponent(target)}&max_steps=${maxSteps}&mode=${mode}`);
+  eventSource.onmessage = handleSSE;
+  eventSource.onerror = onSSEError;
+}
+
+function stopAssessment() {
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  fetch('/api/stop', { method: 'POST' });
+  setButtons(false);
+  setStatus('Değerlendirme durduruldu.', 'warn');
+}
+
+function handleSSE(e) {
+  let data; try { data = JSON.parse(e.data); } catch (_) { return; }
+  switch (data.type) {
+    case 'step_plan': renderStepPlan(data); break;
+    case 'tool_exec': renderToolExecution(data); break;
+    case 'tool_output': renderToolOutput(data); break;
+    case 'finding': renderFinding(data); break;
+    case 'orchestrator_directive': renderOrchestratorDirective(data); break;
+    case 'gate_event': renderGateEvent(data); break;
+    case 'chain_update': renderChainUpdate(data); break;
+    case 'chain': renderChainUpdate(data); break;
+    case 'skills_matched': renderSkillsMatched(data); break;
+    case 'thinking_status': renderThinkingStatus(data); break;
+    case 'awaiting_approval': renderAwaitingApproval(data); break;
+    case 'error': renderError(data); break;
+    case 'complete': finishAssessment(data); break;
+  }
+}
+function onSSEError() {
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  setButtons(false);
+  setStatus('Bağlantı sonlandı.', 'warn');
+}
+
+function finishAssessment(data) {
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  setButtons(false);
+  setStatus(`Tamamlandı — ${data.findings_count || findingsList.length} bulgu`, 'live');
+}
+
+/* ── Renderers ─────────────────────────────────────────── */
+function appendEntry(html, cls) {
+  const feed = document.getElementById('decision-feed');
+  const emptyEl = feed.querySelector('.empty');
+  if (emptyEl) emptyEl.remove();
+  const div = document.createElement('div');
+  div.className = 'entry' + (cls ? ' ' + cls : '');
+  div.innerHTML = html;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function renderOrchestratorDirective(data) {
+  const d = data.directive || data.message || '';
+  appendEntry(
+    `<div class="entry-head"><span class="panel-title">Strateji Direktifi</span>
+       <span class="tag info">Orchestrator</span></div>
+     <div class="directive">${escapeHtml(d)}</div>`,
+    'directive-entry'
+  );
+}
+
+function renderThinkingStatus(data) {
+  setStatus(data.message || 'Çalışıyor...', 'live');
+}
+
+function renderStepPlan(data) {
+  stepCount = data.step || (stepCount + 1);
+  updateStats();
+  const thought = data.thought || data.rationale || '';
+  appendEntry(
+    `<div class="entry-head">
+       <span class="entry-name">Adım ${data.step || stepCount}</span>
+       <span class="tag info">${escapeHtml(data.tool || 'plan')}</span>
+     </div>
+     <div class="meta"><span>${escapeHtml(data.target || '')}</span></div>
+     ${thought ? `<div class="step-line">${escapeHtml(thought)}</div>` : ''}`
+  );
+}
+
+function renderToolExecution(data) {
+  appendEntry(
+    `<div class="entry-head">
+       <span class="panel-title">Araç Çalıştırma</span>
+       <span class="tag info">${escapeHtml(data.tool || '')}</span>
+     </div>
+     <div class="meta"><span>${escapeHtml(data.target || '')}</span></div>
+     ${data.command ? `<div class="evidence">$ ${escapeHtml(data.command)}</div>` : ''}`
+  );
+}
+
+function renderToolOutput(data) {
+  const out = data.output || '';
+  const truncated = out.length > 600 ? out.slice(0, 600) + '\n…' : out;
+  appendEntry(
+    `<div class="entry-head"><span class="panel-title">Çıktı</span>
+       <span class="tag ${data.success ? 'ok' : 'info'}">${data.success ? 'OK' : 'INFO'}</span></div>
+     <div class="evidence">${escapeHtml(truncated)}</div>`
+  );
+}
+
+function renderFinding(data) {
+  findingsList.push(data);
+  updateStats();
+  const board = document.getElementById('findings-board');
+  const emptyEl = board.querySelector('.empty');
+  if (emptyEl) emptyEl.remove();
+  const cls = sevClass(data.severity);
+  const card = document.createElement('div');
+  card.className = 'entry';
+  card.style.borderLeftColor =
+    cls === 'crit' ? 'var(--crit)' : cls === 'high' ? 'var(--high)' :
+    cls === 'med' ? 'var(--med)' : cls === 'low' ? 'var(--low)' : 'var(--border-strong)';
+  card.innerHTML = `
+    <div class="entry-head">
+      <span class="entry-name">${escapeHtml(data.category || 'Finding')}</span>
+      <span class="tag ${cls}">${escapeHtml(data.severity || '')}</span>
+    </div>
+    <div class="meta">
+      <span>${escapeHtml(data.finding_id || '')}</span>
+      <span>${escapeHtml(data.cwe_reference || '')}</span>
+      <span>${escapeHtml(data.tool || '')}</span>
+    </div>
+    <div class="evidence">${escapeHtml(data.evidence_snippet || '')}</div>`;
+  board.appendChild(card);
+  board.scrollTop = board.scrollHeight;
+}
+
+function renderGateEvent(data) {
+  const feed = document.getElementById('gate-events-feed');
+  const emptyEl = feed.querySelector('.empty');
+  if (emptyEl) emptyEl.remove();
+  const passed = data.passed !== false && data.action !== 'kill';
+  const card = document.createElement('div');
+  card.className = 'entry';
+  card.innerHTML = `
+    <div class="entry-head">
+      <span class="entry-name">${escapeHtml(data.category || data.title || 'Gate')}</span>
+      <span class="tag ${passed ? 'ok' : 'crit'}">${passed ? 'ONAY' : 'RET'}</span>
+    </div>
+    ${data.reason ? `<div class="step-line">${escapeHtml(data.reason)}</div>` : ''}`;
+  feed.appendChild(card);
+  const passEl = document.getElementById('gate-stat-pass');
+  const killEl = document.getElementById('gate-stat-kill');
+  if (passed) passEl.innerText = parseInt(passEl.innerText || '0') + 1;
+  else killEl.innerText = parseInt(killEl.innerText || '0') + 1;
+}
+
+function renderChainUpdate(data) {
+  const cont = document.getElementById('chains-container');
+  const emptyEl = cont.querySelector('.empty');
+  if (emptyEl) emptyEl.remove();
+  const chain = data.chain || data;
+  const card = document.createElement('div');
+  card.className = 'entry';
+  const steps = (chain.steps || []).map(s =>
+    `<div class="step-line">• ${escapeHtml(s.detail || s.finding || '')}</div>`).join('');
+  card.innerHTML = `
+    <div class="entry-head">
+      <span class="entry-name">${escapeHtml(chain.name || 'Attack Chain')}</span>
+      <span class="tag ${sevClass(chain.severity)}">${escapeHtml(chain.severity || '')}</span>
+    </div>
+    ${steps}
+    ${chain.impact ? `<div class="step-line">${escapeHtml(chain.impact)}</div>` : ''}`;
+  cont.appendChild(card);
+  document.getElementById('stat-chains').innerText =
+    parseInt(document.getElementById('stat-chains').innerText || '0') + 1;
+}
+
+function renderSkillsMatched(data) {
+  const names = (data.skills || []).map(s => s.name || s).join(', ');
+  document.getElementById('target-skills-names').innerText = names || '—';
+}
+
+function renderAwaitingApproval(data) {
+  appendEntry(
+    `<div class="entry-head"><span class="panel-title">Onay Bekleniyor</span>
+       <span class="tag med">Bekliyor</span></div>
+     <div class="directive">${escapeHtml(data.message || data.command || '')}</div>
+     <div style="margin-top:8px; display:flex; gap:6px;">
+       <button class="btn btn-primary" onclick="submitDecision(true)">Onayla</button>
+       <button class="btn" onclick="submitDecision(false)">Reddet</button>
+     </div>`
+  );
+}
+
+function renderError(data) {
+  appendEntry(
+    `<div class="entry-head"><span class="panel-title">Hata</span>
+       <span class="tag crit">Error</span></div>
+     <div class="directive">${escapeHtml(data.message || '')}</div>`
+  );
+  setStatus(data.message || 'Hata', 'err');
+}
+
+function submitDecision(approved) {
+  fetch('/api/action/decision', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: approved ? 'approve' : 'reject' }),
+  });
+  setStatus(approved ? 'Adım onaylandı.' : 'Adım reddedildi.', approved ? 'live' : 'warn');
+}
+
+/* ── Skills ────────────────────────────────────────────── */
+async function loadAllSkills() {
+  try {
+    const res = await fetch('/api/skills');
+    allSkills = await res.json();
+    renderSkillsList(allSkills);
+  } catch (e) { console.error(e); }
+}
+function renderSkillsList(skills) {
+  const grid = document.getElementById('skills-grid');
+  grid.innerHTML = '';
+  (skills || []).slice(0, 200).forEach(s => {
+    const card = document.createElement('div');
+    card.className = 'skill';
+    card.innerHTML = `<h4>${escapeHtml(s.name || '')}</h4>
+      <p>${escapeHtml(s.description || s.domain || '')}</p>`;
+    grid.appendChild(card);
+  });
+  document.getElementById('stat-filtered').innerText = (skills || []).length;
+}
+function searchSkillsLive() {
+  const q = (document.getElementById('skills-search-input').value || '').toLowerCase();
+  const dom = document.getElementById('skills-domain-filter').value;
+  const filtered = allSkills.filter(s => {
+    const okQ = !q || (s.name || '').toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q);
+    const okD = !dom || (s.domain || '') === dom;
+    return okQ && okD;
+  });
+  renderSkillsList(filtered);
+}
+
+/* ── Debugger ──────────────────────────────────────────── */
+async function refreshDebuggerData() {
+  try {
+    const res = await fetch('/api/debugger');
+    const data = await res.json();
+    const regs = data.registers || data.regs || {};
+    const disasm = data.disasm || data.disassembly || {};
+    document.getElementById('debugger-disasm').textContent =
+      typeof disasm === 'string' ? disasm : JSON.stringify(disasm, null, 2);
+    document.getElementById('debugger-registers').textContent =
+      typeof regs === 'string' ? regs : JSON.stringify(regs, null, 2);
+  } catch (e) {
+    document.getElementById('debugger-disasm').textContent = 'Debugger verisi alınamadı.';
+  }
+}
+
+/* ── Report ────────────────────────────────────────────── */
+async function viewReport() {
+  const modal = document.getElementById('report-modal');
+  modal.classList.add('open');
+  try {
+    const res = await fetch('/api/report');
+    const text = await res.text();
+    document.getElementById('report-content').textContent = text || '(rapor yok)';
+  } catch (e) {
+    document.getElementById('report-content').textContent = 'Rapor yüklenemedi.';
+  }
+}
+function closeReport() { document.getElementById('report-modal').classList.remove('open'); }
+
+/* ── Init ──────────────────────────────────────────────── */
+loadAllSkills();
+</script>
+</body>
+</html>

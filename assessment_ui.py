@@ -1076,6 +1076,16 @@ operator_queue = OperatorDecisionQueue()
 class AssessmentUIHandler(BaseHTTPRequestHandler):
     """Handles HTTP requests and Server-Sent Events (SSE) for the assessment cockpit."""
 
+    def _load_ui(self) -> str:
+        """Yeni profesyonel UI template'ini yukler (yoksa eski HTML_PAGE)."""
+        try:
+            tpl = Path(__file__).resolve().parent / "templates" / "index.html"
+            if tpl.exists():
+                return tpl.read_text(encoding="utf-8")
+        except Exception as e:
+            print(f"[UI] template yuklenemedi: {e}")
+        return HTML_PAGE
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -1084,7 +1094,7 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(HTML_PAGE.encode("utf-8"))
+            self.wfile.write(self._load_ui().encode("utf-8"))
 
         elif path == "/api/report":
             report_path = Path("reports/assessment_report.md")
