@@ -158,8 +158,8 @@ KNOWN_SERVICE_EXPLOITS: Dict[str, Dict[str, Any]] = {
     "telnet": {
         "versions": [],
         "cves": [],
-        "exploit_module": "credential_spray",
-        "base_score": 0.65,
+        "exploit_module": "telnet_default_creds",
+        "base_score": 0.80,
     },
     "ftp": {
         "versions": [],

@@ -203,7 +203,7 @@ class TestAutoSelectExploit:
             "ingreslock_backdoor", "ssh_credential_spray", "vsftpd_backdoor",
             "samba_usermap", "distcc_exec", "unrealircd_backdoor",
             "proftpd_modcopy", "java_rmi_deserialize", "ruby_drb_rce",
-            "vnc_null_auth", "tomcat_manager_deploy",
+            "vnc_null_auth", "tomcat_manager_deploy", "telnet_default_creds",
         }
         result = a._auto_select_exploit("metasploitable2")
         # Hepsi basarisiz olsa bile hedefe uygun bir exploit donmeli (bos degil).
@@ -211,7 +211,7 @@ class TestAutoSelectExploit:
             "vsftpd_backdoor", "ingreslock_backdoor", "samba_usermap",
             "ssh_credential_spray", "distcc_exec", "unrealircd_backdoor",
             "proftpd_modcopy", "java_rmi_deserialize", "ruby_drb_rce",
-            "vnc_null_auth", "tomcat_manager_deploy",
+            "vnc_null_auth", "tomcat_manager_deploy", "telnet_default_creds",
         }
 
     def test_new_exploits_selected_by_port(self):
