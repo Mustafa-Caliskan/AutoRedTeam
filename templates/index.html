@@ -560,12 +560,13 @@ function renderToolOutput(data) {
 }
 
 function renderFinding(data) {
-  findingsList.push(data);
+  const f = data.finding || data;
+  findingsList.push(f);
   updateStats();
   const board = document.getElementById('findings-board');
   const emptyEl = board.querySelector('.empty');
   if (emptyEl) emptyEl.remove();
-  const cls = sevClass(data.severity);
+  const cls = sevClass(f.severity);
   const card = document.createElement('div');
   card.className = 'entry';
   card.style.borderLeftColor =
@@ -573,15 +574,15 @@ function renderFinding(data) {
     cls === 'med' ? 'var(--med)' : cls === 'low' ? 'var(--low)' : 'var(--border-strong)';
   card.innerHTML = `
     <div class="entry-head">
-      <span class="entry-name">${escapeHtml(data.category || 'Finding')}</span>
-      <span class="tag ${cls}">${escapeHtml(data.severity || '')}</span>
+      <span class="entry-name">${escapeHtml(f.category || 'Finding')}</span>
+      <span class="tag ${cls}">${escapeHtml(f.severity || '')}</span>
     </div>
     <div class="meta">
-      <span>${escapeHtml(data.finding_id || '')}</span>
-      <span>${escapeHtml(data.cwe_reference || '')}</span>
-      <span>${escapeHtml(data.tool || '')}</span>
+      <span>${escapeHtml(f.finding_id || '')}</span>
+      <span>${escapeHtml(f.cwe_reference || '')}</span>
+      <span>${escapeHtml(f.tool || '')}</span>
     </div>
-    <div class="evidence">${escapeHtml(data.evidence_snippet || '')}</div>`;
+    <div class="evidence">${escapeHtml(f.evidence_snippet || '')}</div>`;
   board.appendChild(card);
   board.scrollTop = board.scrollHeight;
 }

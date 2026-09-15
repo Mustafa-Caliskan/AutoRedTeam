@@ -284,15 +284,17 @@ class ReconEngine:
         url = f"http://{host}:{port}"
         paths: List[str] = []
 
-        # Iki wordlist: genel (common.txt) + egitim hedefleri (metasploitable.txt)
+        # ONCE hizli/onemli wordlist (egitim hedefi dizinleri), SONRA genel.
+        # Bu sira ile common.txt yavas olsa/timeout olsa bile kritik dizinler
+        # (dvwa, mutillidae, phpMyAdmin...) mutlaka bulunur.
         wordlists = [
-            "/usr/share/wordlists/dirb/common.txt",
             "/opt/art/wordlists/metasploitable.txt",
+            "/usr/share/wordlists/dirb/common.txt",
         ]
         for wl in wordlists:
             cmd = (
                 f"gobuster dir -u {url} -w {wl} "
-                f"-t 30 -q --timeout 5s -k"
+                f"-t 40 -q --timeout 4s -k"
             )
             out = run_command(cmd, timeout=self.timeout_web)
             for line in out.splitlines():
