@@ -48,6 +48,18 @@ reports/screenshots/*.png
 raporlar/
 *.pdf
 
+# Internal Planning & Roadmap Docs (Private / Local)
+GELISTIRME_PLANI_V3.md
+GELISTIRME_VE_MIMARI_RAPORU.md
+METASPLOITABLE2_TAM_KAPSAMA_PLANI.md
+MIMARI_ANALIZ_VE_TASARIM_V3.md
+OTONOM_AI_PLANI_V3.1.md
+PROJE_DURUM_VE_YOL_HARITASI.md
+auto_red_team_project_plan.md
+UYGULAMA_REHBERI_V3.md
+*_PLANI*.md
+*YOL_HARITASI*.md
+
 # Testing & Coverage
 .pytest_cache/
 .coverage

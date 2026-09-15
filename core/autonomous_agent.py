@@ -187,8 +187,8 @@ You have these tools available:
 - exploit(exploit_name): run a known exploit. Names: vsftpd_backdoor, samba_usermap,
   ingreslock_backdoor, ssh_credential_spray, distcc_exec, unrealircd_backdoor,
   proftpd_modcopy, java_rmi_deserialize, ruby_drb_rce, vnc_null_auth, tomcat_manager_deploy
-- privesc(technique): privilege escalation. Techniques: suid_enumeration, sudoers_audit,
-  sudo_privesc, gtfobins_privesc, verify_root, linpeas
+- privesc(technique): privilege escalation. Native techniques: suid_enumeration, sudoers_audit,
+  sudo_privesc, gtfobins_privesc, verify_root
 - credential_spray(service, port): try default credentials
 - web_exploit(app): exploit a web application. Apps: dvwa, mutillidae, phpmyadmin,
   tikiwiki, webdav. This auto-logs-in and tests SQLi/XSS/command-injection/upload.
@@ -340,14 +340,20 @@ class AutonomousAgent:
             if action is None:
                 # Ikinci deneme: daha kisa, JSON-only talimat
                 logger.info("[Agent] Ilk parse basarisiz; JSON-only tekrar deneniyor.")
-                retry = (
-                    "STOP. Output ONLY this JSON object, nothing else, no thinking, no explanation:\n"
-                    '{"thought": "short", "tool": "nmap", "params": {"ports": "22"}, "rationale": "short"}'
-                )
+                messages = [
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": content or "{}"},
+                    {"role": "user", "content": (
+                        "Your previous response was not a valid single JSON action.\n"
+                        "Choose your NEXT action based on the current attack state (e.g. privesc, web_exploit, post_exploit, done).\n"
+                        "Output ONLY a raw JSON object on a single line:\n"
+                        '{"thought": "...", "tool": "...", "params": {...}, "rationale": "..."}'
+                    )},
+                ]
                 resp2 = self.llm.generate(
-                    messages=[{"role": "user", "content": retry}],
+                    messages=messages,
                     temperature=0.0,
-                    max_tokens=200,
+                    max_tokens=300,
                     enable_thinking=False,
                 )
                 action = self._parse_action(resp2.content or "")
@@ -475,8 +481,11 @@ class AutonomousAgent:
     def _run_privesc(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from core.privesc_engine import dispatch_privesc
         cred = self.context.credentials[0] if self.context.credentials else {}
+        technique = params.get("technique", "suid_enumeration")
+        if technique == "linpeas":
+            technique = "suid_enumeration"
         return dispatch_privesc(
-            technique=params.get("technique", "suid_enumeration"),
+            technique=technique,
             target=self.target,
             username=cred.get("username", "msfadmin"),
             password=cred.get("password", "msfadmin"),
