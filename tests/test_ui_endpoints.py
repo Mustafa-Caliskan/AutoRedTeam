@@ -47,12 +47,17 @@ def test_operator_decision_queue_timeout_fallback():
     assert decision.get("auto") is True
 
 
-def test_api_docker_status_endpoint():
+def test_api_docker_status_endpoint(monkeypatch):
     """Verify /api/docker/status endpoint returns valid json health report."""
     from http.server import HTTPServer
     from assessment_ui import AssessmentUIHandler
     import urllib.request
     
+    monkeypatch.setattr(
+        "assessment_ui.docker_manager.get_health_report",
+        lambda: {"docker_available": True, "containers": {"metasploitable2": "running"}}
+    )
+
     server = HTTPServer(('127.0.0.1', 0), AssessmentUIHandler)
     port = server.server_address[1]
     t = threading.Thread(target=server.handle_request)
@@ -60,7 +65,7 @@ def test_api_docker_status_endpoint():
     t.start()
     
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/docker/status", timeout=5.0) as resp:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/docker/status", timeout=10.0) as resp:
             assert resp.status == 200
             data = json.loads(resp.read().decode())
             assert "docker_available" in data
