@@ -62,7 +62,8 @@ from core.verifier import verifier
 from core.state_machine import AssessmentStateMachine, Phase
 from core.credential_engine import CredentialEngine
 from core.finding_correlator import FindingCorrelator
-from core.cvss_scorer import score_finding
+from core.cvss_scorer import score_finding, severity_from_cvss
+from core.attack_mapper import get_attack, get_remediation
 from core.llm_advisor import llm_advisor
 
 logger = logging.getLogger(__name__)
@@ -2696,6 +2697,11 @@ class AssessmentAssistant:
         """
         all_findings = findings if findings is not None else self._load_existing_findings()
 
+        # CVSS v3.1 skorlama + MITRE ATT&CK eslemesi (her bulguya)
+        for f in all_findings:
+            score_finding(f)
+            f["attack"] = get_attack(f.get("category", ""))
+
         severity_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
         sorted_findings = sorted(
             all_findings,
@@ -2706,6 +2712,15 @@ class AssessmentAssistant:
         high = sum(1 for f in all_findings if f.get("severity") == "High")
         medium = sum(1 for f in all_findings if f.get("severity") == "Medium")
         low = sum(1 for f in all_findings if f.get("severity") == "Low")
+
+        # CVSS tabanli genel risk skoru
+        cvss_scores = [
+            f.get("cvss_score") for f in all_findings
+            if isinstance(f.get("cvss_score"), (int, float))
+        ]
+        max_cvss = max(cvss_scores) if cvss_scores else 0.0
+        avg_cvss = round(sum(cvss_scores) / len(cvss_scores), 1) if cvss_scores else 0.0
+        overall_risk = severity_from_cvss(max_cvss) if cvss_scores else "Informational"
 
         # Root elde edildi mi? (privesc/exploit bulgularinda uid=0 kaniti)
         root_obtained = any(
@@ -2744,6 +2759,7 @@ bulguları özetler. LLM yalnızca öneri sunmuş; hiçbir komut operatör onay�
 | **Yüksek (High)** | `{high}` |
 | **Orta (Medium)** | `{medium}` |
 | **Düşük (Low)** | `{low}` |
+| **Genel Risk Skoru** | `{overall_risk}` (maks CVSS: {max_cvss}, ort: {avg_cvss}) |
 | **Foothold Elde Edildi** | `{'✅ Evet' if foothold_obtained else '❌ Hayır'}` |
 | **Root Elde Edildi (UID=0)** | `{'✅ EVET — SİSTEM TAMAMEN ELE GEÇİRİLDİ' if root_obtained else '❌ Hayır'}` |
 
@@ -2776,15 +2792,16 @@ Modelin her adımda ürettiği akıl yürütme (thought) ve seçtiği araç:
                 target = d.get("target", "")
                 md += f"| {d.get('step')} | `{tool}` | {target} | {thought} |\n"
 
-        md += "\n---\n\n## 📋 4. Bulgu Tablosu\n\n| Bulgu ID | Araç | Kategori | Şiddet | CWE |\n| :--- | :--- | :--- | :---: | :--- |\n"
+        md += "\n---\n\n## 📋 4. Bulgu Tablosu\n\n| Bulgu ID | Araç | Kategori | Şiddet | CVSS | CWE |\n| :--- | :--- | :--- | :---: | :---: | :--- |\n"
         if not sorted_findings:
-            md += "| *(bulgu yok)* | — | — | — | — |\n"
+            md += "| *(bulgu yok)* | — | — | — | — | — |\n"
         else:
             for f in sorted_findings:
+                cvss = f.get("cvss_score", "—")
                 md += (
                     f"| `{f.get('finding_id')}` | {f.get('tool')} | "
                     f"{f.get('category')} | {f.get('severity')} | "
-                    f"{f.get('cwe_reference')} |\n"
+                    f"{cvss} | {f.get('cwe_reference')} |\n"
                 )
 
         md += "\n---\n\n## 🔍 5. Detaylı Bulgu Analizi ve Öneriler (Remediation)\n\n"
@@ -2793,9 +2810,12 @@ Modelin her adımda ürettiği akıl yürütme (thought) ve seçtiği araç:
             md += "*Değerlendirme sırasında kaydedilmiş bulgu bulunmamaktadır.*\n"
         else:
             for i, f in enumerate(sorted_findings, 1):
+                atk = f.get("attack", {}) or {}
                 md += f"""### 5.{i}. {f.get('finding_id')}: {f.get('category')} ({f.get('severity')})
 * **Araç:** `{f.get('tool')}` | **Hedef:** `{f.get('target')}`
-* **CWE Referansı:** `{f.get('cwe_reference')}`
+* **CWE Referansı:** `{f.get('cwe_reference')}` | **CVSS v3.1:** `{f.get('cvss_score', '—')}` ({f.get('cvss_rating', '—')})
+* **CVSS Vektörü:** `{f.get('cvss_vector', '—')}`
+* **MITRE ATT&CK:** `{atk.get('technique_id', '—')}` — {atk.get('technique', '—')} ({atk.get('tactic', '—')})
 * **İnsan Onayı:** {'✅ Evet' if f.get('human_approved') else '❌ Hayır'}
 * **Kanıt (Evidence):**
 ```
@@ -2806,7 +2826,7 @@ Modelin her adımda ürettiği akıl yürütme (thought) ve seçtiği araç:
 > {self._impact_for_severity(f.get('severity'))}
 
 **Önerilen Düzeltme (Remediation):**
-> {self._remediation_for_category(f.get('category'))}
+> {get_remediation(f.get('category', ''))}
 
 ---
 """
