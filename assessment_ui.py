@@ -2017,9 +2017,10 @@ class AssessmentUIHandler(BaseHTTPRequestHandler):
 
         def _progress(stage, msg):
             self.send_sse({
-                "type": "orchestrator_directive",
+                "type": "progress",
+                "stage": stage,
                 "step": 0,
-                "directive": f"🧭 [{stage}] {msg}"
+                "message": msg,
             })
 
         try:

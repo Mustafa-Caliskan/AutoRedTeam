@@ -184,6 +184,8 @@
   }
   .directive { font-size: 12px; color: #c3cad6; white-space: pre-wrap; }
   .step-line { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+  .progress-line { font-size: 11.5px; color: var(--muted); padding: 4px 2px; border-bottom: 1px solid var(--border); }
+  .progress-stage { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); margin-right: 8px; }
 
   /* Gate */
   .gate-summary { display: flex; gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
@@ -457,6 +459,7 @@ function stopAssessment() {
 function handleSSE(e) {
   let data; try { data = JSON.parse(e.data); } catch (_) { return; }
   switch (data.type) {
+    case 'progress': renderProgress(data); break;
     case 'step_plan': renderStepPlan(data); break;
     case 'tool_exec': renderToolExecution(data); break;
     case 'tool_output': renderToolOutput(data); break;
@@ -508,6 +511,17 @@ function renderOrchestratorDirective(data) {
 
 function renderThinkingStatus(data) {
   setStatus(data.message || 'Çalışıyor...', 'live');
+}
+
+function renderProgress(data) {
+  const feed = document.getElementById('decision-feed');
+  const emptyEl = feed.querySelector('.empty');
+  if (emptyEl) emptyEl.remove();
+  const div = document.createElement('div');
+  div.className = 'progress-line';
+  div.innerHTML = `<span class="progress-stage">${escapeHtml(data.stage || 'info')}</span>${escapeHtml(data.message || '')}`;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
 }
 
 function renderStepPlan(data) {
