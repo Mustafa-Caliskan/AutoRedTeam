@@ -14,15 +14,15 @@
 |---|---|---|
 | **Aşama 1** — Web tam kapsama | ✅ TAMAMLANDI | DVWA SQLi/XSS/CMD, Mutillidae SQLi/LFI, phpMyAdmin creds |
 | **Aşama 2** — Veritabanı | ✅ TAMAMLANDI | MySQL empty_password, PostgreSQL default creds |
-| **Aşama 3** — AI web yönlendirme | ⏳ Sırada | - |
-| **Aşama 4** — Network exploit'ler | ⏳ Bekliyor | - |
+| **Aşama 3** — AI web yönlendirme | ✅ ÇALIŞIYOR | AI ilk eylem olarak web_exploit(dvwa) kullanıyor |
+| **Aşama 4** — Network exploit'ler | 🔶 KISMİ | Telnet default creds ✅; Samba/RubyDRb/UnrealIRCd hâlâ başarısız |
 | **Aşama 5** — Post-exploit | ⏳ Bekliyor | - |
 | **Aşama 6** — Rapor | ⏳ Bekliyor | - |
 
 ### Test Sonuçları (Güncel)
 ```
-282 passed in ~51s   (önceki: 270)
-12 bulgu / 28 zafiyet (%43)
+288 passed in ~47s
+15/28 zafiyet (%54)
 ```
 
 ### Bulunan 12 Zafiyet
