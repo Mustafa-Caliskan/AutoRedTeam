@@ -118,8 +118,7 @@ class PDFReportGenerator:
             ),
             "Evidence": ParagraphStyle(
                 "Evidence", parent=styles["Code"], fontSize=8, leading=11,
-                textColor=colors.HexColor("#065F46"),
-                backColor=colors.HexColor("#ECFDF5"), borderPadding=6,
+                fontName="Courier", textColor=colors.HexColor("#065F46"),
             ),
             "TableCell": ParagraphStyle(
                 "TableCell", parent=styles["Normal"], fontSize=8.5, leading=11,
@@ -391,6 +390,22 @@ class PDFReportGenerator:
 
         for i, f in enumerate(sorted_findings, 1):
             sev = f.get("severity", "Low")
+            evidence_text = (
+                str(f.get("evidence_snippet", ""))
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")[:400]
+            )
+            evidence_p = Paragraph(evidence_text, s["Evidence"])
+            evidence_box = Table([[evidence_p]], colWidths=[180 * mm])
+            evidence_box.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#ECFDF5")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#A7F3D0")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]))
+
             block = [
                 Paragraph(
                     f"3.{i} {f.get('finding_id', '-')}: {f.get('category', '-')} "
@@ -405,11 +420,9 @@ class PDFReportGenerator:
                 ),
                 Spacer(1, 2 * mm),
                 Paragraph("<b>Kanit (Evidence):</b>", s["Body"]),
-                Paragraph(
-                    str(f.get("evidence_snippet", "")).replace("<", "&lt;").replace(">", "&gt;")[:400],
-                    s["Evidence"],
-                ),
-                Spacer(1, 2 * mm),
+                Spacer(1, 1.5 * mm),
+                evidence_box,
+                Spacer(1, 2.5 * mm),
                 Paragraph(f"<b>Etki (Impact):</b> {self._impact_for_severity(sev)}", s["Body"]),
                 Paragraph(
                     f"<b>Onerilen Duzeltme (Remediation):</b> "
