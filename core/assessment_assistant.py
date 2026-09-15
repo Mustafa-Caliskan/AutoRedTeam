@@ -1678,6 +1678,23 @@ class AssessmentAssistant:
                     if exploitable:
                         _progress("post-exploit",
                                   f"  ✅ {len(exploitable)} istismar edilebilir privesc vektörü!")
+
+                # Kernel exploit potansiyeli (searchsploit; gercek istismar DENENMEZ)
+                kc = pe.check_kernel_exploit()
+                if kc and kc.get("potential_exploit"):
+                    self.record_finding(
+                        tool="post_exploit",
+                        category="Known vulnerable service version",
+                        severity="High",
+                        cwe_reference="CWE-1104",
+                        evidence_snippet=(
+                            f"Kernel {kc['kernel']} için bilinen yerel yetki "
+                            f"yükseltme exploit'leri:\n{kc['searchsploit'][:300]}"
+                        ),
+                        human_approved=True,
+                    )
+                    _progress("post-exploit",
+                              f"  ⚠️ Kernel {kc['kernel']} için exploit mevcut")
             except Exception as e:
                 logger.warning(f"[Deterministic] Post-exploit hatası: {e}")
 
