@@ -1,13 +1,49 @@
 # AutoRedTeam — Metasploitable2 Tam Kapsama Planı (v3.2)
 
 > **Oluşturulma:** 2026-09-14
-> **Mevcut Durum:** 28 zafiyetten 8'i bulunuyor (%29)
+> **Güncelleme:** 2026-09-15 — Aşama 1 & 2 tamamlandı
+> **Mevcut Durum:** 28 zafiyetten 12'si bulunuyor (%43)
 > **Hedef:** 28 zafiyetten ≥22'si bulunuyor (%80+)
-> **Temel:** Test sonucu analizi (8 bulgu, otonom AI root aldı)
+> **Temel:** Test sonucu analizi
 
 ---
 
-## 0. Mevcut Durum Özeti
+## 📊 İLERLEME DURUMU
+
+| Aşama | Durum | Sonuç |
+|---|---|---|
+| **Aşama 1** — Web tam kapsama | ✅ TAMAMLANDI | DVWA SQLi/XSS/CMD, Mutillidae SQLi/LFI, phpMyAdmin creds |
+| **Aşama 2** — Veritabanı | ✅ TAMAMLANDI | MySQL empty_password, PostgreSQL default creds |
+| **Aşama 3** — AI web yönlendirme | ⏳ Sırada | - |
+| **Aşama 4** — Network exploit'ler | ⏳ Bekliyor | - |
+| **Aşama 5** — Post-exploit | ⏳ Bekliyor | - |
+| **Aşama 6** — Rapor | ⏳ Bekliyor | - |
+
+### Test Sonuçları (Güncel)
+```
+282 passed in ~51s   (önceki: 270)
+12 bulgu / 28 zafiyet (%43)
+```
+
+### Bulunan 12 Zafiyet
+| # | Zafiyet | Kaynak |
+|---|---|---|
+| 1 | SSH default creds (msfadmin) | exploit |
+| 2 | Ingreslock backdoor (root) | exploit |
+| 3 | Credential reuse | exploit |
+| 4 | DVWA SQL Injection | web_exploit |
+| 5 | DVWA XSS | web_exploit |
+| 6 | DVWA Command Injection | web_exploit |
+| 7 | Mutillidae SQL Injection | web_exploit |
+| 8 | Mutillidae LFI | web_exploit |
+| 9 | phpMyAdmin default creds (root:"") | web_exploit |
+| 10 | WebDAV File Upload | web_exploit |
+| 11 | MySQL empty_password (root:"") | db_exploit |
+| 12 | PostgreSQL default creds (postgres:postgres) | db_exploit |
+
+---
+
+## 0. Mevcut Durum Özeti (İlk Analiz)
 
 ### Bulunan 8 Zafiyet
 | # | Zafiyet | Şiddet | Kaynak |

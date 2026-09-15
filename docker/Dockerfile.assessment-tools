@@ -38,6 +38,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     sshpass \
     openssh-client \
+    default-mysql-client \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # nuclei (ProjectDiscovery) — 5000+ CVE/misconfig şablonu ile otonom zafiyet taraması

@@ -1642,6 +1642,9 @@ class AssessmentAssistant:
         # 5b. Web uygulama istismarı (DVWA, Mutillidae, phpMyAdmin, WebDAV)
         self._run_web_exploitation(recon, _progress)
 
+        # 5c. Veritabani istismarı (MySQL, PostgreSQL)
+        self._run_db_exploitation(recon, _progress)
+
         # 6. Post-exploitation (foothold varsa)
         if sm.foothold_obtained:
             _progress("post-exploit", "Foothold alındı; privesc vektörleri aranıyor...")
@@ -1924,6 +1927,47 @@ class AssessmentAssistant:
             "lfi": "CWE-98",
             "default_creds": "CWE-521",
         }.get(vuln_type, "CWE-1035")
+
+    def _run_db_exploitation(self, recon, _progress) -> None:
+        """
+        Veritabani istismari (v3.2): MySQL ve PostgreSQL default/sifresiz
+        credential denemesi + numaralandirma.
+        """
+        try:
+            from core.db_exploit_engine import DBExploitEngine
+        except Exception as e:
+            logger.warning(f"[Deterministic] DBExploitEngine yüklenemedi: {e}")
+            return
+
+        # Recon'da MySQL/PostgreSQL portu var mi?
+        open_ports = {svc.port for svc in getattr(recon, "services", [])}
+        db_ports = open_ports & {3306, 5432}
+        if not db_ports:
+            return
+
+        _progress("database", "Veritabanı servisleri tespit edildi; istismar ediliyor...")
+        engine = DBExploitEngine(self.target)
+        try:
+            db_findings = engine.run_all()
+        except Exception as e:
+            logger.warning(f"[Deterministic] DB istismar hatası: {e}")
+            return
+
+        for df in db_findings:
+            if df.verified:
+                self.record_finding(
+                    tool="db_exploit",
+                    category="Weak Default Credentials",
+                    severity=df.severity,
+                    cwe_reference="CWE-521",
+                    evidence_snippet=(
+                        f"{df.engine} ({df.host}:{df.port}) {df.vuln_type}: "
+                        f"{df.username}:{df.password!r}\n{df.evidence[:300]}"
+                    ),
+                    human_approved=True,
+                )
+                _progress("database",
+                          f"  ✅ {df.engine}: {df.vuln_type} ({df.username})")
 
     def _consult_payload_crafter(self, step, result: Dict[str, Any]) -> None:
         """
