@@ -81,29 +81,33 @@ stuck detection, full audit log.
 ### Test Suite
 
 ```
-270 passed in ~50s
+302 passed in ~48s (100% test pass rate)
 ```
 
-### New Modules (v3.0/v3.1)
+### Core Architecture Modules
 
 ```
-core/vuln_mapper.py          # service → CVE → exploit mapping
-core/exploit_planner.py      # deterministic exploitation planner
-core/verifier.py             # evidence-based verification
-core/state_machine.py        # pentest phase transitions
-core/credential_engine.py    # default creds + reuse + brute
-core/web_exploit_engine.py   # DVWA/Mutillidae/phpMyAdmin/WebDAV
-core/post_exploit.py         # foothold → privesc → credential dump
-core/finding_correlator.py   # dedup + attack chains
-core/cvss_scorer.py          # CVSS v3.1 scoring
-core/llm_advisor.py          # Payload Crafter / Triage / Escalation
-core/autonomous_agent.py     # OODA autonomous agent
+core/recon_engine.py         # Network & web service discovery (nmap, gobuster, nikto)
+core/vuln_mapper.py          # Service → CVE → exploit mapping
+core/exploit_planner.py      # Deterministic exploitation planner
+core/exploit_runner.py       # Standalone exploit runners with evidence verification
+core/web_exploit_engine.py   # DVWA / Mutillidae / phpMyAdmin / WebDAV exploits
+core/db_exploit_engine.py    # MySQL & PostgreSQL credential & schema exploitation
+core/privesc_engine.py       # SUID, sudoers, GTFOBins privilege escalation
+core/post_exploit.py         # Foothold → Privesc → Credential dumping (/etc/shadow)
+core/verifier.py             # Evidence-based validation (strict uid=0 verification)
+core/finding_correlator.py   # Finding deduplication & attack chain synthesis
+core/cvss_scorer.py          # Automated CVSS v3.1 vector calculation
+core/attack_mapper.py        # MITRE ATT&CK technique mapping & remediation
+core/autonomous_agent.py     # OODA autonomous AI exploitation loop
+core/context_engine.py       # L0/L1/L2 hierarchical context compression (Headroom CCR)
+reports/pdf_report_generator.py # Professional PDF executive report generator
 ```
 
-### Roadmap
+### Roadmap & Future Milestones
 
-See [`METASPLOITABLE2_TAM_KAPSAMA_PLANI.md`](METASPLOITABLE2_TAM_KAPSAMA_PLANI.md)
-for the full coverage plan (target: 22/28 vulnerabilities).
+- **Phase 1 (Active Focus):** Infrastructure & Web Pentest. Expand network daemon exploits (Samba usermap, UnrealIRCd backdoor, Ruby DRb) to achieve 22+/28 Metasploitable2 coverage, followed by DOM-level SPA security analysis against OWASP Juice Shop.
+- **Phase 2 (Future Milestone):** Adversarial AI & Agentic Red Teaming. Deploy automated prompt injection, tool hijacking (OWASP LLM06 Excessive Agency), and credential exfiltration against autonomous corporate LLM agents under MITRE ATLAS and OWASP Top 10 for LLM.
 
 ---
 
@@ -385,14 +389,20 @@ python chat_ui.py
   - Anthropic Claude 5 Sonnet Supreme Evaluation Arbiter (LLM-as-a-Judge) & Crisis Escalation Oracle.
   - Zero-key DuckDuckGo live web research tool for real-time exploit discovery.
   - Synchronized multi-wave tactical triage protocols.
-- [ ] **Phase 3: Autonomous AI Agent Red Teaming v2.0**
+- [x] **Phase 3: Enterprise Assessment, UI & Post-Exploitation (v3.2)**
+  - SQLite persistent finding store & audit trail (`data/findings.db`).
+  - Dark Cyber Web UI Console with Server-Sent Events (SSE) real-time decision streaming (`ui/`).
+  - CVSS v3.1 Vector Engine & MITRE ATT&CK Enterprise Matrix mapping.
+  - Post-Exploitation privilege escalation engine (SUID binary exploitation to `uid=0` root, Linux kernel check).
+  - Professional Executive & Technical PDF Report Generator with tamper-evident raw evidence callouts.
+- [ ] **Phase 4: Autonomous AI Agent Red Teaming v2.0**
   - Automated multi-turn jailbreak campaigns with tree-of-attacks exploration.
   - Adaptive converter mutation engine based on victim refusal classification.
   - Real-time LLM vulnerability benchmark leaderboard and exportable compliance scorecards.
 
 ---
 
-## Advanced Agent Capabilities (v2.2 Architecture)
+## Advanced Agent Capabilities (v3.2 Architecture)
 
 ### 1. Hierarchical Context Engine & CCR (Cache-Compress-Retrieve)
 Inspired by Headroom and OpenViking virtual filesystem principles, AutoRedTeam implements an ultra-lean, 3-tier hierarchical context engine:
@@ -411,18 +421,23 @@ Inspired by Headroom and OpenViking virtual filesystem principles, AutoRedTeam i
 - **Automatic Evidence Capture:** Captures high-resolution visual proof screenshots saved directly to `reports/screenshots/`.
 - **Zero-Crash Graceful Degradation:** Seamlessly falls back to resilient HTTP DOM parsing if Playwright browser dependencies are absent.
 
+### 4. Post-Exploitation & Root Privilege Escalation Engine
+- Automates privilege escalation assessment upon establishing an initial foothold.
+- Inspects system permissions, SUID/SGID binaries (e.g., SUID nmap, sudo misconfigurations), and sensitive file access (`/etc/shadow`).
+- Achieves full `uid=0(root)` privilege verification and records raw cryptographic and process evidence.
+
 ---
 
 ## Verification & Testing
 
-Run the comprehensive automated test suite (153 unit and integration tests):
+Run the comprehensive automated test suite (302 unit and integration tests):
 
 ```bash
 python -m pytest tests/ -v
 ```
 
 ```
-============================ 153 passed in 51.93s =============================
+============================ 302 passed in ~48s (100% pass rate) =============================
 ```
 
 ---
