@@ -41,18 +41,15 @@ AutoRedTeam bridges the gap between adversarial AI safety and traditional offens
 
 ### Current Capability (Metasploitable2)
 
-**12 vulnerabilities detected** (out of ~28):
+**16 verified vulnerabilities actively exploited & mapped**:
 
-| Category | Findings |
+| Category | Findings & Targets |
 |---|---|
-| Weak Default Credentials | SSH (msfadmin), phpMyAdmin (root:"") |
-| Backdoor Exploitation | Ingreslock root shell |
-| SQL Injection | DVWA, Mutillidae |
-| Command Injection | DVWA |
-| Cross-Site Scripting | DVWA |
-| Local File Inclusion | Mutillidae, WebDAV |
-| File Upload | WebDAV |
-| Privilege Escalation | SUID/sudo → root |
+| Remote Backdoors & Daemons | VSFTPD 2.3.4, ProFTPD 1.3.5, Samba 3.0.20, Distcc, UnrealIRCd, Ingreslock |
+| Weak Default Credentials | SSH (`msfadmin`), Telnet (`msfadmin`), phpMyAdmin (`root:""`), MySQL, PostgreSQL |
+| Web Application Exploits | SQLi (DVWA/Mutillidae), Command Injection (DVWA), XSS, LFI |
+| WebDAV & File Upload | WebDAV arbitrary file upload & shell execution |
+| Privilege Escalation | SUID / GTFOBins & Sudoers exploitation -> `uid=0(root)` ✅ |
 
 ### Four Operating Modes (Web UI)
 
@@ -351,14 +348,16 @@ python main.py --mode mock --security-level hardened
 python main.py --mode openai --attacker-endpoint https://your-tunnel.trycloudflare.com/v1
 ```
 
-### 3. Web Interfaces
+### 3. Web Cockpit & Consoles
 
 ```bash
-# Dual-Agent Duel Arena (CyberStrike 35B vs Corporate AI Agent)
-python arena_ui.py
+# Flagship Autonomous Security Cockpit (Live SSE Decision Stream & Pentest Engine)
+python assessment_ui.py
+# -> Accessible at http://localhost:5000
 
-# Direct Offensive Security Chat Console
+# Direct Offensive Security Chat Console (CyberStrike 35B Interactive Console)
 python chat_ui.py
+# -> Accessible at http://localhost:7860
 ```
 
 ---
