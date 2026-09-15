@@ -353,7 +353,7 @@ python main.py --mode openai --attacker-endpoint https://your-tunnel.trycloudfla
 ```bash
 # Flagship Autonomous Security Cockpit (Live SSE Decision Stream & Pentest Engine)
 python assessment_ui.py
-# -> Accessible at http://localhost:5000
+# -> Accessible at http://localhost:7870
 
 # Direct Offensive Security Chat Console (CyberStrike 35B Interactive Console)
 python chat_ui.py
